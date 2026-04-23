@@ -3,168 +3,145 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Firma Digital — Intelec</title>
+<title>Firma Digital — Intelec v2</title>
 
-<!--
-  IMPORTANTE: Office.js DEBE cargarse antes que cualquier otro script.
-  Se carga desde la CDN oficial de Microsoft para que funcione como
-  add-in de Outlook/Teams. Si se abre en un navegador normal,
-  Office.onReady() simplemente no hará nada y la app funciona igual.
--->
 <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
-
-<!-- PDF.js para renderizar el PDF en canvas -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-
-<!-- pdf-lib para modificar el PDF y añadir la firma visual -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-
-<!-- forge para PKCS#7 y manejo del certificado .p12 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/forge/1.3.1/forge.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
 
 :root {
-  --bg: #0b0d12;
-  --surface: #111318;
-  --surface2: #191d27;
-  --border: #222636;
-  --accent: #3b82f6;
-  --green: #22c55e;
-  --amber: #f59e0b;
-  --red: #ef4444;
-  --text: #e2e8f0;
-  --muted: #64748b;
-  --mono: 'IBM Plex Mono', monospace;
-  --sans: 'IBM Plex Sans', sans-serif;
+  --bg: #0b0d12; --surface: #111318; --surface2: #191d27; --border: #222636;
+  --accent: #3b82f6; --green: #22c55e; --amber: #f59e0b; --red: #ef4444; --purple: #a78bfa;
+  --text: #e2e8f0; --muted: #64748b;
+  --mono: 'IBM Plex Mono', monospace; --sans: 'IBM Plex Sans', sans-serif;
 }
-
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; overflow: hidden; }
-
-/* ── LAYOUT ── */
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; overflow: hidden; }
 #app { display: flex; flex-direction: column; height: 100%; }
 
-header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 10px 16px;
-  display: flex; align-items: center; gap: 12px;
-  flex-shrink: 0;
-}
-.logo { width: 30px; height: 30px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
-.header-title { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .05em; }
-.header-sub { font-size: 10px; color: var(--muted); font-family: var(--mono); }
-#mode-badge { margin-left: auto; padding: 3px 8px; border: 1px solid var(--border); border-radius: 20px; font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 9px 14px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.logo { width: 28px; height: 28px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
+.h-title { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .05em; }
+.h-sub { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+#mode-badge { margin-left: auto; padding: 3px 8px; border: 1px solid var(--border); border-radius: 20px; font-family: var(--mono); font-size: 9px; color: var(--muted); white-space: nowrap; }
 #mode-badge.outlook { border-color: rgba(59,130,246,.5); color: var(--accent); background: rgba(59,130,246,.08); }
 
-/* steps */
-#steps { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 12px; display: flex; gap: 0; flex-shrink: 0; overflow-x: auto; }
-.step { display: flex; align-items: center; gap: 6px; padding: 8px 10px; font-size: 10px; font-family: var(--mono); color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
-.step .sn { width: 16px; height: 16px; border-radius: 50%; background: var(--border); display: flex; align-items: center; justify-content: center; font-size: 8px; flex-shrink: 0; }
-.step.active { color: var(--text); border-bottom-color: var(--accent); }
-.step.active .sn { background: var(--accent); color: #fff; }
-.step.done { color: var(--green); }
-.step.done .sn { background: var(--green); color: #0b0d12; }
-.step-sep { color: var(--border); font-size: 12px; align-self: center; }
-
-/* workspace */
 #workspace { display: flex; flex: 1; overflow: hidden; }
-
-/* sidebar */
-#sidebar { width: 280px; min-width: 280px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+#sidebar { width: 300px; min-width: 300px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
 #sidebar-inner { flex: 1; overflow-y: auto; }
-.panel { padding: 14px; border-bottom: 1px solid var(--border); }
-.panel-title { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: .1em; color: var(--muted); text-transform: uppercase; margin-bottom: 12px; }
+.panel { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.panel-title { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: .1em; color: var(--muted); text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.panel-title .count { background: var(--accent); color: #fff; padding: 1px 6px; border-radius: 8px; font-size: 8px; }
 
-/* drop zone */
-.drop-zone { border: 1.5px dashed var(--border); border-radius: 7px; padding: 16px; text-align: center; cursor: pointer; transition: all .2s; background: rgba(255,255,255,.01); }
-.drop-zone:hover, .drop-zone.drag { border-color: var(--accent); background: rgba(59,130,246,.05); }
-.drop-zone input { display: none; }
-.dz-icon { font-size: 22px; margin-bottom: 6px; display: block; }
-.dz-title { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
-.dz-sub { font-size: 10px; color: var(--muted); line-height: 1.5; }
+.drop { border: 1.5px dashed var(--border); border-radius: 6px; padding: 14px 10px; text-align: center; cursor: pointer; transition: all .2s; background: rgba(255,255,255,.01); }
+.drop:hover, .drop.drag { border-color: var(--accent); background: rgba(59,130,246,.05); }
+.drop input { display: none; }
+.dz-icon { font-size: 20px; margin-bottom: 4px; display: block; }
+.dz-title { font-weight: 600; font-size: 11px; margin-bottom: 2px; }
+.dz-sub { font-size: 10px; color: var(--muted); line-height: 1.4; }
 
-/* file pill */
-.file-pill { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: rgba(34,197,94,.07); border: 1px solid rgba(34,197,94,.2); border-radius: 6px; margin-top: 8px; }
-.fp-icon { font-size: 16px; }
-.fp-name { font-family: var(--mono); font-size: 10px; color: var(--green); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fp-del { color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
-.fp-del:hover { color: var(--red); }
+.doc-item { display: flex; align-items: center; gap: 8px; padding: 8px 9px; border-radius: 6px; cursor: pointer; transition: all .15s; margin-bottom: 4px; border: 1px solid transparent; font-size: 11px; }
+.doc-item:hover { background: var(--surface2); border-color: var(--border); }
+.doc-item.active { background: rgba(59,130,246,.12); border-color: var(--accent); }
+.doc-item .di-icon { font-size: 14px; flex-shrink: 0; }
+.doc-item .di-name { font-family: var(--mono); font-size: 10px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-item .di-badge { font-size: 9px; padding: 1px 5px; border-radius: 8px; font-family: var(--mono); flex-shrink: 0; white-space: nowrap; }
+.di-badge.pending { background: var(--surface2); color: var(--muted); }
+.di-badge.configured { background: rgba(59,130,246,.15); color: var(--accent); }
+.di-badge.done { background: rgba(34,197,94,.15); color: var(--green); }
+.di-badge.error { background: rgba(239,68,68,.15); color: var(--red); }
+.doc-item .di-del { color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; flex-shrink: 0; }
+.doc-item .di-del:hover { color: var(--red); }
 
-/* outlook attachments */
-.att-btn { width: 100%; text-align: left; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 7px 10px; border-radius: 6px; font-family: var(--mono); font-size: 10px; cursor: pointer; margin-bottom: 5px; transition: border-color .2s; display: flex; align-items: center; gap: 6px; }
-.att-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-/* form */
-.f-label { display: block; font-size: 10px; color: var(--muted); font-family: var(--mono); margin-bottom: 5px; margin-top: 10px; }
-.f-label:first-child { margin-top: 0; }
-input[type=text], input[type=password] { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 7px 9px; border-radius: 5px; font-family: var(--mono); font-size: 11px; outline: none; transition: border-color .2s; }
-input:focus { border-color: var(--accent); }
-
-/* buttons */
-.btn { width: 100%; padding: 9px; border-radius: 6px; border: none; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .04em; cursor: pointer; transition: all .2s; display: flex; align-items: center; justify-content: center; gap: 6px; }
-.btn + .btn { margin-top: 6px; }
-.btn-primary { background: var(--accent); color: #fff; }
-.btn-primary:hover:not(:disabled) { background: #2563eb; }
-.btn-primary:disabled { opacity: .3; cursor: not-allowed; }
-.btn-success { background: var(--green); color: #0b0d12; }
-.btn-success:hover:not(:disabled) { background: #16a34a; }
-.btn-success:disabled { opacity: .3; cursor: not-allowed; }
-.btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
-
-/* card */
-.card { background: var(--surface2); border: 1px solid var(--border); border-radius: 7px; padding: 10px 12px; font-size: 11px; line-height: 1.6; margin-bottom: 10px; }
+.card { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 10px; line-height: 1.5; margin-bottom: 8px; }
 .card.blue { border-left: 3px solid var(--accent); }
 .card.green { border-left: 3px solid var(--green); color: var(--green); }
 .card.amber { border-left: 3px solid var(--amber); color: var(--amber); }
 .card.red { border-left: 3px solid var(--red); color: var(--red); }
 
-/* coord rows */
-.coord-row { display: flex; justify-content: space-between; padding: 3px 0; font-family: var(--mono); font-size: 10px; border-bottom: 1px solid var(--border); }
-.coord-row:last-child { border-bottom: none; }
-.ck { color: var(--muted); }
-.cv { color: var(--accent); font-weight: 600; }
+.detect-list { margin-bottom: 8px; }
+.detect-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; margin-bottom: 4px; cursor: pointer; font-size: 10px; transition: all .15s; font-family: var(--mono); }
+.detect-item:hover { border-color: var(--accent); background: var(--surface2); }
+.detect-item.selected { border-color: var(--accent); background: rgba(59,130,246,.1); }
+.detect-item .dti-type { font-size: 12px; }
+.detect-item .dti-info { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detect-item .dti-page { color: var(--muted); font-size: 9px; }
 
-/* role grid */
-.role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.role-card { padding: 10px 8px; border: 1.5px solid var(--border); border-radius: 6px; cursor: pointer; text-align: center; transition: all .2s; background: var(--surface2); }
+.role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 8px; }
+.role-card { padding: 9px 6px; border: 1.5px solid var(--border); border-radius: 5px; cursor: pointer; text-align: center; transition: all .2s; background: var(--surface2); }
 .role-card:hover, .role-card.selected { border-color: var(--accent); background: rgba(59,130,246,.08); }
-.role-card .rc-icon { font-size: 18px; margin-bottom: 4px; }
-.role-card .rc-title { font-family: var(--mono); font-size: 10px; font-weight: 600; }
-.role-card .rc-pos { font-size: 9px; color: var(--muted); margin-top: 1px; }
+.role-card .rc-icon { font-size: 16px; margin-bottom: 3px; }
+.role-card .rc-title { font-family: var(--mono); font-size: 9px; font-weight: 600; }
 .role-card.selected .rc-title { color: var(--accent); }
 
-/* spinner */
-.spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; flex-shrink: 0; }
+.scope-options { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.scope-opt { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; cursor: pointer; font-size: 10px; transition: all .15s; font-family: var(--mono); }
+.scope-opt:hover { border-color: var(--accent); }
+.scope-opt.selected { border-color: var(--accent); background: rgba(59,130,246,.08); color: var(--accent); }
+.scope-opt input { margin: 0; accent-color: var(--accent); }
+.scope-opt .so-label { flex: 1; }
+.scope-opt .so-hint { font-size: 9px; color: var(--muted); }
+.scope-opt.selected .so-hint { color: var(--accent); opacity: .8; }
+#pages-input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 5px 7px; border-radius: 4px; font-family: var(--mono); font-size: 10px; outline: none; margin-top: 4px; }
+#pages-input:focus { border-color: var(--accent); }
+
+.f-label { display: block; font-size: 9px; color: var(--muted); font-family: var(--mono); margin-bottom: 4px; margin-top: 8px; }
+.f-label:first-child { margin-top: 0; }
+input[type=text], input[type=password] { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 8px; border-radius: 5px; font-family: var(--mono); font-size: 10px; outline: none; transition: border-color .2s; }
+input:focus { border-color: var(--accent); }
+
+.btn { width: 100%; padding: 8px; border-radius: 5px; border: none; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .04em; cursor: pointer; transition: all .2s; display: flex; align-items: center; justify-content: center; gap: 5px; }
+.btn + .btn { margin-top: 5px; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #2563eb; }
+.btn-primary:disabled { opacity: .3; cursor: not-allowed; }
+.btn-success { background: var(--green); color: #0b0d12; font-size: 12px; padding: 11px; }
+.btn-success:hover:not(:disabled) { background: #16a34a; }
+.btn-success:disabled { opacity: .3; cursor: not-allowed; }
+.btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn-sm { padding: 5px 8px; font-size: 9px; }
+
+.file-pill { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: rgba(34,197,94,.07); border: 1px solid rgba(34,197,94,.2); border-radius: 5px; margin-top: 6px; font-size: 10px; }
+.fp-name { font-family: var(--mono); font-size: 10px; color: var(--green); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-del { color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+.fp-del:hover { color: var(--red); }
+
+.spinner { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; flex-shrink: 0; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* status bar */
-#statusbar { height: 26px; background: var(--surface2); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 14px; gap: 7px; flex-shrink: 0; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+#statusbar { height: 22px; background: var(--surface2); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 12px; gap: 6px; flex-shrink: 0; font-family: var(--mono); font-size: 9px; color: var(--muted); }
 .sb-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
 #statusbar.ok .sb-dot { background: var(--green); }
 #statusbar.busy .sb-dot { background: var(--amber); animation: pulse 1s infinite; }
 #statusbar.error .sb-dot { background: var(--red); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-/* PDF area */
 #pdf-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #080a0f; }
-#pdf-toolbar { padding: 7px 14px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-shrink: 0; font-family: var(--mono); font-size: 10px; color: var(--muted); }
-.tn { background: var(--border); border: none; color: var(--text); width: 24px; height: 24px; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; transition: background .15s; }
+#pdf-toolbar { padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.tn { background: var(--border); border: none; color: var(--text); width: 22px; height: 22px; border-radius: 4px; cursor: pointer; font-size: 11px; display: flex; align-items: center; justify-content: center; transition: background .15s; }
 .tn:hover { background: var(--accent); }
 .tn:disabled { opacity: .3; cursor: not-allowed; }
-#pdf-scroll { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 24px; }
-#pdf-wrap { position: relative; display: inline-block; box-shadow: 0 16px 48px rgba(0,0,0,.7); }
+#pdf-scroll { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 20px; }
+#pdf-wrap { position: relative; display: inline-block; box-shadow: 0 14px 40px rgba(0,0,0,.7); }
 #pdf-canvas { display: block; }
 #sig-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
-#empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); }
-.es-icon { font-size: 40px; opacity: .25; }
+#empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); }
+.es-icon { font-size: 38px; opacity: .22; }
 
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+#sign-all-panel { background: var(--surface); border-top: 1px solid var(--border); padding: 10px 14px; flex-shrink: 0; }
+.progress-list { max-height: 160px; overflow-y: auto; margin-bottom: 8px; background: var(--surface2); border-radius: 5px; padding: 4px; }
+.progress-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; font-family: var(--mono); font-size: 9px; }
+.progress-item .pi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -173,146 +150,140 @@ input:focus { border-color: var(--accent); }
   <header>
     <div class="logo">✍️</div>
     <div>
-      <div class="header-title">FIRMA DIGITAL INTELEC</div>
-      <div class="header-sub">Certificado · PDF · Descarga automática</div>
+      <div class="h-title">FIRMA DIGITAL INTELEC <span style="color:var(--muted)">v2</span></div>
+      <div class="h-sub">Multi-documento · Detección inteligente</div>
     </div>
     <div id="mode-badge">Standalone</div>
   </header>
 
-  <div id="steps">
-    <div class="step active" id="st1"><span class="sn">1</span>PDF</div>
-    <span class="step-sep">›</span>
-    <div class="step" id="st2"><span class="sn">2</span>Campo</div>
-    <span class="step-sep">›</span>
-    <div class="step" id="st3"><span class="sn">3</span>Certificado</div>
-    <span class="step-sep">›</span>
-    <div class="step" id="st4"><span class="sn">4</span>Firmar</div>
-  </div>
-
   <div id="workspace">
 
-    <!-- SIDEBAR -->
     <div id="sidebar">
       <div id="sidebar-inner">
 
-        <!-- 1: PDF -->
-        <div class="panel" id="panel-upload">
-          <div class="panel-title">1 — Documento PDF</div>
-          <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-pdf').click()">
-            <input type="file" id="file-pdf" accept=".pdf">
-            <span class="dz-icon">📄</span>
-            <div class="dz-title">Arrastra el PDF aquí</div>
-            <div class="dz-sub">o haz clic para seleccionar</div>
+        <!-- 1. DOCUMENTOS -->
+        <div class="panel">
+          <div class="panel-title">
+            📄 Documentos <span class="count" id="doc-count">0</span>
           </div>
-          <div id="pdf-file-pill" style="display:none"></div>
-          <div id="outlook-attach-area" style="display:none; margin-top:10px">
-            <div class="panel-title" style="margin-bottom:6px">Adjuntos del correo</div>
+          <div class="drop" id="drop-zone" onclick="document.getElementById('file-pdf').click()">
+            <input type="file" id="file-pdf" accept=".pdf" multiple>
+            <span class="dz-icon">📥</span>
+            <div class="dz-title">Añadir PDFs</div>
+            <div class="dz-sub">Arrastra o clic · Multi-selección</div>
+          </div>
+          <div id="doc-list" style="margin-top:8px"></div>
+          <div id="outlook-attach-area" style="display:none;margin-top:8px">
+            <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:5px">📎 Del correo:</div>
             <div id="outlook-attach-list"></div>
           </div>
         </div>
 
-        <!-- 2: Campo firma -->
-        <div class="panel" id="panel-field" style="display:none">
-          <div class="panel-title">2 — Campo de firma</div>
-          <div id="field-msg"></div>
-          <div id="role-selector" style="display:none">
-            <div class="card blue" style="margin-bottom:10px;font-size:10px">
-              No hay campo de firma en el PDF.<br>Selecciona tu rol para posicionarla:
-            </div>
+        <!-- 2. CONFIG DOC ACTUAL -->
+        <div class="panel" id="panel-config" style="display:none">
+          <div class="panel-title">
+            ⚙️ Config: <span id="cfg-docname" style="color:var(--text);text-transform:none;letter-spacing:0">—</span>
+          </div>
+
+          <div id="detections-area" style="display:none">
+            <div id="detection-summary" class="card"></div>
+            <div id="detect-list" class="detect-list"></div>
+          </div>
+
+          <div id="role-area" style="display:none">
+            <div class="card amber">⚠️ Sin campo ni palabra "firma" — selecciona rol:</div>
             <div class="role-grid">
-              <div class="role-card" id="rc-Cliente"    onclick="selectRole('Cliente')">
-                <div class="rc-icon">🏢</div>
-                <div class="rc-title">Cliente</div>
-                <div class="rc-pos">Inferior der.</div>
+              <div class="role-card" data-role="Cliente" onclick="selectRole('Cliente')">
+                <div class="rc-icon">🏢</div><div class="rc-title">Cliente</div>
               </div>
-              <div class="role-card" id="rc-Instalador" onclick="selectRole('Instalador')">
-                <div class="rc-icon">⚡</div>
-                <div class="rc-title">Instalador</div>
-                <div class="rc-pos">Inferior centro</div>
+              <div class="role-card" data-role="Instalador" onclick="selectRole('Instalador')">
+                <div class="rc-icon">⚡</div><div class="rc-title">Instalador</div>
               </div>
-              <div class="role-card" id="rc-Proveedor"  onclick="selectRole('Proveedor')">
-                <div class="rc-icon">🚚</div>
-                <div class="rc-title">Proveedor</div>
-                <div class="rc-pos">Inferior izq.</div>
+              <div class="role-card" data-role="Proveedor" onclick="selectRole('Proveedor')">
+                <div class="rc-icon">🚚</div><div class="rc-title">Proveedor</div>
               </div>
-              <div class="role-card" id="rc-Personalizado" onclick="selectRole('Personalizado')">
-                <div class="rc-icon">🖱️</div>
-                <div class="rc-title">Manual</div>
-                <div class="rc-pos">Clic en PDF</div>
+              <div class="role-card" data-role="Personalizado" onclick="selectRole('Personalizado')">
+                <div class="rc-icon">🖱️</div><div class="rc-title">Manual</div>
               </div>
             </div>
           </div>
-          <div id="coords-display" style="display:none; margin-top:10px">
-            <div class="card" style="margin-bottom:8px; padding:8px 10px">
-              <div class="coord-row"><span class="ck">Página</span><span class="cv" id="cd-page">—</span></div>
-              <div class="coord-row"><span class="ck">X / Y</span><span class="cv" id="cd-xy">—</span></div>
-              <div class="coord-row"><span class="ck">Tamaño</span><span class="cv" id="cd-wh">—</span></div>
-              <div class="coord-row"><span class="ck">Rol</span><span class="cv" id="cd-role">—</span></div>
+
+          <div id="scope-area" style="display:none">
+            <div class="f-label">Aplicar en:</div>
+            <div class="scope-options">
+              <label class="scope-opt selected" data-scope="auto">
+                <input type="radio" name="scope" value="auto" checked onchange="setScope('auto')">
+                <span class="so-label">Solo donde se detecta</span>
+                <span class="so-hint" id="scope-auto-hint"></span>
+              </label>
+              <label class="scope-opt" data-scope="all">
+                <input type="radio" name="scope" value="all" onchange="setScope('all')">
+                <span class="so-label">Todas las páginas</span>
+                <span class="so-hint" id="scope-all-hint"></span>
+              </label>
+              <label class="scope-opt" data-scope="specific">
+                <input type="radio" name="scope" value="specific" onchange="setScope('specific')">
+                <span class="so-label">Páginas específicas</span>
+              </label>
+              <input type="text" id="pages-input" placeholder="Ej: 1, 3, 5-7" style="display:none" oninput="updatePagesInput()">
             </div>
-            <button class="btn btn-ghost" onclick="resetField()">↺ Cambiar posición</button>
           </div>
+
+          <button class="btn btn-primary" id="btn-configure" onclick="confirmConfig()" disabled>
+            ✅ Confirmar configuración
+          </button>
         </div>
 
-        <!-- 3: Certificado -->
+        <!-- 3. CERTIFICADO -->
         <div class="panel" id="panel-cert" style="display:none">
-          <div class="panel-title">3 — Certificado Digital</div>
-          <div class="drop-zone" onclick="document.getElementById('file-cert').click()">
+          <div class="panel-title">🔐 Certificado Digital</div>
+          <div class="drop" onclick="document.getElementById('file-cert').click()">
             <input type="file" id="file-cert" accept=".p12,.pfx">
-            <span class="dz-icon">🔐</span>
+            <span class="dz-icon">🔑</span>
             <div class="dz-title">Certificado .p12 / .pfx</div>
-            <div class="dz-sub">FNMT, DNIe, o certificado corporativo</div>
+            <div class="dz-sub">Se usa para todos los PDFs</div>
           </div>
-          <div id="cert-file-pill" style="display:none"></div>
-          <label class="f-label" style="margin-top:12px">Contraseña</label>
+          <div id="cert-pill" style="display:none"></div>
+          <label class="f-label">Contraseña</label>
           <input type="password" id="cert-pass" placeholder="••••••••" autocomplete="off">
-          <div id="cert-info" style="display:none; margin-top:8px"></div>
-          <button class="btn btn-ghost" id="btn-validate" onclick="validateCert()" disabled style="margin-top:8px">
-            🔍 Validar certificado
+          <div id="cert-info" style="display:none;margin-top:6px"></div>
+          <button class="btn btn-ghost btn-sm" id="btn-validate" onclick="validateCert()" disabled style="margin-top:6px;width:100%">
+            🔍 Validar
           </button>
-        </div>
-
-        <!-- 4: Firmar -->
-        <div class="panel" id="panel-sign" style="display:none">
-          <div class="panel-title">4 — Firmar y Descargar</div>
-          <div id="sign-summary" class="card blue" style="margin-bottom:10px; font-size:11px; line-height:1.8"></div>
-          <div class="card amber" style="margin-bottom:10px; font-size:10px">
-            ℹ️ Firma visual + PKCS#7 en metadatos. Para PAdES con TSA usa AutoFirma.
-          </div>
-          <button class="btn btn-success" id="btn-sign" onclick="signDocument()" disabled>
-            ✍️ FIRMAR Y DESCARGAR
-          </button>
-          <div id="sign-progress" style="display:none; margin-top:10px; font-family:var(--mono); font-size:11px; color:var(--muted); display:flex; align-items:center; gap:8px">
-            <div class="spinner"></div><span id="sign-msg">Procesando...</span>
-          </div>
-          <div id="sign-done" style="display:none; margin-top:10px">
-            <div class="card green">✅ Firmado y descargado correctamente.</div>
-            <button class="btn btn-primary" onclick="resetAll()" style="margin-top:8px">← Firmar otro</button>
-          </div>
         </div>
 
       </div>
-    </div><!-- /sidebar -->
 
-    <!-- PDF VIEWER -->
+      <!-- 4. FIRMAR TODOS -->
+      <div id="sign-all-panel" style="display:none">
+        <div id="sign-summary-text" style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:8px;line-height:1.5"></div>
+        <div id="sign-progress-list" class="progress-list" style="display:none"></div>
+        <button class="btn btn-success" id="btn-sign-all" onclick="signAllDocuments()" disabled>
+          ✍️ FIRMAR TODOS
+        </button>
+        <button class="btn btn-primary" id="btn-reset" onclick="resetAll()" style="display:none;margin-top:6px">
+          ← Firmar nueva tanda
+        </button>
+      </div>
+
+    </div>
+
     <div id="pdf-area">
       <div id="empty-state">
         <div class="es-icon">📋</div>
-        <p style="font-size:12px">Carga un PDF para comenzar</p>
-        <p style="font-size:10px; font-family:var(--mono); color:var(--muted)">
-          Desde archivo local, adjunto de Outlook,<br>o arrastrar aquí
-        </p>
+        <p style="font-size:12px">Añade PDFs para comenzar</p>
+        <p style="font-size:10px;font-family:var(--mono);color:var(--muted)">Local, Outlook o arrastrar aquí</p>
       </div>
-      <div id="pdf-viewer" style="display:none; flex-direction:column; height:100%">
+      <div id="pdf-viewer" style="display:none;flex-direction:column;height:100%">
         <div id="pdf-toolbar">
           <button class="tn" id="btn-prev" onclick="changePage(-1)">‹</button>
           <span id="page-info">1 / 1</span>
           <button class="tn" id="btn-next" onclick="changePage(1)">›</button>
           <span>│</span>
-          <button class="tn" onclick="changeZoom(-0.25)">−</button>
+          <button class="tn" onclick="changeZoom(-0.2)">−</button>
           <span id="zoom-info">100%</span>
-          <button class="tn" onclick="changeZoom(0.25)">+</button>
-          <span style="flex:1"></span>
-          <span id="field-indicator"></span>
+          <button class="tn" onclick="changeZoom(0.2)">+</button>
+          <span style="flex:1;text-align:right;font-size:9px" id="viewer-hint"></span>
         </div>
         <div id="pdf-scroll">
           <div id="pdf-wrap">
@@ -323,30 +294,28 @@ input:focus { border-color: var(--accent); }
       </div>
     </div>
 
-  </div><!-- /workspace -->
+  </div>
 
   <div id="statusbar">
     <div class="sb-dot"></div>
     <span id="status-text">Listo</span>
   </div>
 
-</div><!-- /app -->
+</div>
 
 <script>
 "use strict";
 
-// ═══════════════════════════════════════
-//  CONFIG
-// ═══════════════════════════════════════
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-// Posiciones por rol: función(anchoPage, altoPage) → [x1,y1,x2,y2] en pts PDF
-// y1 = desde abajo (sistema PDF). Firma en la zona baja del documento.
+// ═══════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════
 const ROLE_RECTS = {
-  'Cliente':    (w,h) => [w*0.62, 30, w*0.98, 30+65],
-  'Instalador': (w,h) => [w*0.25, 30, w*0.75, 30+65],
-  'Proveedor':  (w,h) => [w*0.02, 30, w*0.38, 30+65],
+  'Cliente':       (w,h) => [w*0.62, 30, w*0.98, 95],
+  'Instalador':    (w,h) => [w*0.25, 30, w*0.75, 95],
+  'Proveedor':     (w,h) => [w*0.02, 30, w*0.38, 95],
 };
 
 const ROLE_COLORS = {
@@ -357,59 +326,38 @@ const ROLE_COLORS = {
   'Firmante':      [0.28, 0.16, 0.62],
 };
 
-// ═══════════════════════════════════════
+const FIRMA_PATTERNS = [
+  /\bfirma\b/i, /\bfirmado\b/i, /\bfirmante\b/i, /\bfirmar\b/i,
+  /\bsignature\b/i, /\bsigned\s+by\b/i,
+];
+
+// ═══════════════════════════════════════════════
 //  STATE
-// ═══════════════════════════════════════
+// ═══════════════════════════════════════════════
 const S = {
-  pdfDoc: null,       // pdfjs document
-  pdfBytes: null,     // ArrayBuffer
-  pdfName: 'documento',
-  totalPages: 0,
+  documents: [],
+  currentDocId: null,
   currentPage: 1,
   zoom: 1.0,
-  sigFields: [],
-  selectedField: null, // {page, rect, role}
-  isDrawing: false,
+  cert: { bytes: null, obj: null, key: null, name: '', validated: false },
   drawStart: null,
-  certBytes: null,
-  certObj: null,
-  certKey: null,
-  certName: '',
-  role: '',
   isOutlook: false,
 };
 
-// ═══════════════════════════════════════
-//  STATUS BAR
-// ═══════════════════════════════════════
-function setStatus(msg, type='') {
-  document.getElementById('statusbar').className = type;
-  document.getElementById('status-text').textContent = msg;
-}
+function $(id) { return document.getElementById(id); }
+function setStatus(msg, type='') { $('statusbar').className = type; $('status-text').textContent = msg; }
+function uid() { return 'd_' + Date.now() + '_' + Math.random().toString(36).slice(2,7); }
+function currentDoc() { return S.documents.find(d => d.id === S.currentDocId); }
 
-// ═══════════════════════════════════════
-//  STEPS
-// ═══════════════════════════════════════
-function goStep(n) {
-  [1,2,3,4].forEach(i => {
-    const el = document.getElementById('st'+i);
-    el.className = 'step' + (i<n?' done':i===n?' active':'');
-  });
-}
-
-// ═══════════════════════════════════════
-//  OFFICE.JS INIT
-//  Office.onReady es seguro aunque Office.js no esté disponible —
-//  la librería siempre define la función, pero no dispara nada si
-//  no hay host de Office. Si falla por red, el catch lo absorbe.
-// ═══════════════════════════════════════
+// ═══════════════════════════════════════════════
+//  OFFICE.JS
+// ═══════════════════════════════════════════════
 function initOffice() {
-  Office.onReady(function(info) {
+  Office.onReady(info => {
     if (info.host === Office.HostType.Outlook) {
       S.isOutlook = true;
-      const badge = document.getElementById('mode-badge');
-      badge.textContent = '📧 Outlook';
-      badge.className = 'outlook';
+      $('mode-badge').textContent = '📧 Outlook';
+      $('mode-badge').className = 'outlook';
       loadOutlookAttachments();
     }
   });
@@ -425,204 +373,358 @@ function loadOutlookAttachments() {
     );
     if (!pdfs.length) return;
 
-    const area = document.getElementById('outlook-attach-area');
-    const list = document.getElementById('outlook-attach-list');
-    area.style.display = 'block';
+    $('outlook-attach-area').style.display = 'block';
+    const list = $('outlook-attach-list');
     list.innerHTML = '';
 
     pdfs.forEach(att => {
       const btn = document.createElement('button');
-      btn.className = 'att-btn';
+      btn.className = 'btn btn-ghost btn-sm';
+      btn.style.cssText = 'width:100%;margin-bottom:3px';
       btn.innerHTML = '📎 ' + att.name;
       btn.onclick = () => loadOutlookAttachment(att);
       list.appendChild(btn);
     });
-    setStatus(pdfs.length + ' adjunto(s) PDF detectado(s)', 'ok');
-  } catch(e) {
-    console.warn('loadOutlookAttachments:', e);
-  }
+
+    if (pdfs.length > 1) {
+      const btnAll = document.createElement('button');
+      btnAll.className = 'btn btn-primary btn-sm';
+      btnAll.style.cssText = 'width:100%;margin-top:4px';
+      btnAll.innerHTML = '⬇️ Cargar todos (' + pdfs.length + ')';
+      btnAll.onclick = () => pdfs.forEach(att => loadOutlookAttachment(att));
+      list.appendChild(btnAll);
+    }
+    setStatus(pdfs.length + ' PDF(s) en el correo', 'ok');
+  } catch(e) { console.warn(e); }
 }
 
 function loadOutlookAttachment(att) {
-  setStatus('Cargando adjunto...', 'busy');
+  setStatus('Cargando ' + att.name + '...', 'busy');
   Office.context.mailbox.item.getAttachmentContentAsync(
-    att.id,
-    { asyncContext: att },
-    function(result) {
+    att.id, { asyncContext: att },
+    result => {
       if (result.status === Office.AsyncResultStatus.Succeeded) {
         const b64 = result.value.content;
-        const binary = atob(b64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        S.pdfName = att.name.replace(/\.pdf$/i, '');
-        showFilePill('pdf-file-pill', att.name, '📎', resetPdf);
-        processPdfBuffer(bytes.buffer);
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        addDocument(att.name, bytes.buffer);
       } else {
-        setStatus('Error al cargar adjunto: ' + result.error.message, 'error');
+        setStatus('Error: ' + result.error.message, 'error');
       }
     }
   );
 }
 
-// ═══════════════════════════════════════
-//  FILE INPUTS
-// ═══════════════════════════════════════
-document.getElementById('file-pdf').onchange = function(e) {
-  const f = e.target.files[0];
-  if (!f) return;
-  S.pdfName = f.name.replace(/\.pdf$/i, '');
-  showFilePill('pdf-file-pill', f.name, '📄', resetPdf);
-  f.arrayBuffer().then(buf => processPdfBuffer(buf));
+// ═══════════════════════════════════════════════
+//  FILE INPUT / DRAG & DROP
+// ═══════════════════════════════════════════════
+$('file-pdf').onchange = e => {
+  Array.from(e.target.files).forEach(f => {
+    if (f.name.toLowerCase().endsWith('.pdf')) f.arrayBuffer().then(buf => addDocument(f.name, buf));
+  });
+  e.target.value = '';
 };
 
-document.getElementById('file-cert').onchange = function(e) {
+$('file-cert').onchange = e => {
   const f = e.target.files[0];
   if (!f) return;
   f.arrayBuffer().then(buf => {
-    S.certBytes = buf;
-    showFilePill('cert-file-pill', f.name, '🔐', resetCert);
-    document.getElementById('btn-validate').disabled = false;
-    setStatus('Certificado cargado — introduce la contraseña y valida', '');
+    S.cert.bytes = buf;
+    showCertPill(f.name);
+    $('btn-validate').disabled = false;
+    setStatus('Certificado cargado', '');
   });
 };
 
-// Drag & drop sobre toda la página (PDF)
 document.body.addEventListener('dragover', e => e.preventDefault());
-document.body.addEventListener('drop', function(e) {
+document.body.addEventListener('drop', e => {
   e.preventDefault();
-  const f = e.dataTransfer.files[0];
-  if (f && f.name.toLowerCase().endsWith('.pdf')) {
-    S.pdfName = f.name.replace(/\.pdf$/i, '');
-    showFilePill('pdf-file-pill', f.name, '📄', resetPdf);
-    f.arrayBuffer().then(buf => processPdfBuffer(buf));
-  }
+  Array.from(e.dataTransfer.files).forEach(f => {
+    if (f.name.toLowerCase().endsWith('.pdf')) f.arrayBuffer().then(buf => addDocument(f.name, buf));
+  });
 });
 
-const dz = document.getElementById('drop-zone');
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
-dz.addEventListener('drop', function(e) {
-  e.preventDefault();
-  dz.classList.remove('drag');
-  const f = e.dataTransfer.files[0];
-  if (f && f.name.toLowerCase().endsWith('.pdf')) {
-    S.pdfName = f.name.replace(/\.pdf$/i, '');
-    showFilePill('pdf-file-pill', f.name, '📄', resetPdf);
-    f.arrayBuffer().then(buf => processPdfBuffer(buf));
+const dz = $('drop-zone');
+['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, () => dz.classList.remove('drag')));
+
+// ═══════════════════════════════════════════════
+//  ADD DOCUMENT + ANÁLISIS
+// ═══════════════════════════════════════════════
+async function addDocument(name, buf) {
+  if (S.documents.some(d => d.name === name && d.bytes.byteLength === buf.byteLength)) {
+    setStatus('Ya cargado: ' + name, '');
+    return;
   }
-});
 
-// ═══════════════════════════════════════
-//  PDF PROCESSING
-// ═══════════════════════════════════════
-async function processPdfBuffer(buf) {
-  setStatus('Analizando PDF...', 'busy');
-  S.pdfBytes = buf;
+  const doc = {
+    id: uid(), name, bytes: buf, pdfDoc: null, totalPages: 0,
+    sigFields: [], textMatches: [],
+    config: null, status: 'analyzing',
+  };
+  S.documents.push(doc);
+  renderDocList();
+  setStatus('Analizando ' + name + '...', 'busy');
 
-  // Show viewer
-  document.getElementById('empty-state').style.display = 'none';
-  const viewer = document.getElementById('pdf-viewer');
-  viewer.style.display = 'flex';
+  try {
+    doc.pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    doc.totalPages = doc.pdfDoc.numPages;
+    doc.sigFields = await detectSigFields(doc.pdfDoc);
+    doc.textMatches = await detectTextMatches(doc.pdfDoc);
+    doc.status = 'pending';
 
-  S.pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
-  S.totalPages = S.pdfDoc.numPages;
-  S.currentPage = 1;
-  await renderPage(1);
-
-  // Detect AcroForm signature fields
-  S.sigFields = await detectSigFields();
-
-  // Show field panel
-  document.getElementById('panel-field').style.display = 'block';
-  goStep(2);
-
-  if (S.sigFields.length > 0) {
-    showDetectedFields();
-  } else {
-    document.getElementById('field-msg').innerHTML =
-      '<div class="card amber" style="font-size:10px">⚠️ No se encontraron campos de firma en el PDF.</div>';
-    document.getElementById('role-selector').style.display = 'block';
-    setStatus('Selecciona tu rol para posicionar la firma', '');
+    if (!S.currentDocId) selectDocument(doc.id);
+    else {
+      renderDocList();
+      if (currentDoc()?.id === doc.id) renderDocConfig(doc);
+    }
+    setStatus('Analizado: ' + name, 'ok');
+  } catch(err) {
+    doc.status = 'error';
+    doc.error = err.message;
+    renderDocList();
+    setStatus('Error: ' + err.message, 'error');
   }
 }
 
-async function detectSigFields() {
+async function detectSigFields(pdfDoc) {
   const fields = [];
-  for (let p = 1; p <= S.totalPages; p++) {
-    const page = await S.pdfDoc.getPage(p);
+  for (let p = 1; p <= pdfDoc.numPages; p++) {
+    const page = await pdfDoc.getPage(p);
     const annotations = await page.getAnnotations();
     for (const ann of annotations) {
       if (ann.subtype === 'Widget' && ann.fieldType === 'Sig') {
-        fields.push({ page: p, rect: ann.rect, name: ann.fieldName || 'Firma' });
+        fields.push({ page: p, rect: ann.rect.slice(), name: ann.fieldName || 'Firma' });
       }
     }
   }
   return fields;
 }
 
-function showDetectedFields() {
-  const n = S.sigFields.length;
-  let html = `<div class="card green" style="margin-bottom:10px;font-size:10px">
-    ✅ ${n} campo${n>1?'s':''} de firma detectado${n>1?'s':''}</div>`;
-  S.sigFields.forEach((f, i) => {
-    html += `<div class="card" style="margin-bottom:6px;cursor:pointer;font-size:10px" onclick="useField(${i})">
-      <strong style="color:var(--accent)">${f.name}</strong><br>
-      Página ${f.page} · X:${Math.round(f.rect[0])} Y:${Math.round(f.rect[1])}
-    </div>`;
+async function detectTextMatches(pdfDoc) {
+  const matches = [];
+  for (let p = 1; p <= pdfDoc.numPages; p++) {
+    const page = await pdfDoc.getPage(p);
+    const vp = page.getViewport({ scale: 1 });
+    const textContent = await page.getTextContent();
+
+    for (const item of textContent.items) {
+      if (!item.str || !item.str.trim()) continue;
+      if (FIRMA_PATTERNS.some(re => re.test(item.str))) {
+        const tx = item.transform[4];
+        const ty = item.transform[5];
+        const textW = item.width || 40;
+        const sigW = Math.max(textW * 4, 180);
+        const sigH = 60;
+        let x1 = tx;
+        let y1 = ty - sigH - 8;
+        let x2 = x1 + sigW;
+        let y2 = ty - 4;
+        if (x2 > vp.width - 5) { const s = x2 - (vp.width - 5); x1 -= s; x2 -= s; }
+        if (x1 < 5) x1 = 5;
+        if (y1 < 5) y1 = 5;
+
+        matches.push({ page: p, rect: [x1, y1, x2, y2], text: item.str.trim().slice(0, 30) });
+      }
+    }
+  }
+  return matches;
+}
+
+// ═══════════════════════════════════════════════
+//  DOCUMENT LIST UI
+// ═══════════════════════════════════════════════
+function renderDocList() {
+  $('doc-count').textContent = S.documents.length;
+  const list = $('doc-list');
+
+  if (!S.documents.length) {
+    list.innerHTML = '';
+    $('panel-config').style.display = 'none';
+    $('panel-cert').style.display = 'none';
+    $('sign-all-panel').style.display = 'none';
+    $('pdf-viewer').style.display = 'none';
+    $('empty-state').style.display = 'flex';
+    return;
+  }
+
+  list.innerHTML = '';
+  S.documents.forEach(doc => {
+    const item = document.createElement('div');
+    item.className = 'doc-item' + (doc.id === S.currentDocId ? ' active' : '');
+    let badge = '';
+    let icon = '📄';
+    if (doc.status === 'analyzing') { badge = '<div class="spinner"></div>'; icon = '⏳'; }
+    else if (doc.status === 'pending') { badge = '<span class="di-badge pending">Pend.</span>'; }
+    else if (doc.status === 'configured') { badge = '<span class="di-badge configured">Listo</span>'; icon = '✓'; }
+    else if (doc.status === 'signing') { badge = '<div class="spinner"></div>'; icon = '✍️'; }
+    else if (doc.status === 'done') { badge = '<span class="di-badge done">OK</span>'; icon = '✅'; }
+    else if (doc.status === 'error') { badge = '<span class="di-badge error">Err</span>'; icon = '❌'; }
+
+    item.innerHTML = `<span class="di-icon">${icon}</span>
+      <span class="di-name" title="${doc.name}">${doc.name}</span>
+      ${badge}
+      <span class="di-del" title="Eliminar">×</span>`;
+    item.onclick = ev => {
+      if (ev.target.classList.contains('di-del')) { removeDocument(doc.id); return; }
+      selectDocument(doc.id);
+    };
+    list.appendChild(item);
   });
-  document.getElementById('field-msg').innerHTML = html;
-  useField(0); // auto-select first
-  setStatus(n + ' campo(s) de firma encontrado(s)', 'ok');
+  updateSignAllPanel();
 }
 
-function useField(i) {
-  const f = S.sigFields[i];
-  S.selectedField = { page: f.page, rect: f.rect.slice(), role: 'Firmante' };
-  S.role = 'Firmante';
-  refreshCoords();
-  drawSigBox();
-  revealCertPanel();
+function selectDocument(id) {
+  S.currentDocId = id;
+  S.currentPage = 1;
+  S.zoom = 1.0;
+  const doc = currentDoc();
+  if (!doc) return;
+
+  $('pdf-viewer').style.display = 'flex';
+  $('empty-state').style.display = 'none';
+  $('panel-config').style.display = 'block';
+  $('panel-cert').style.display = 'block';
+
+  renderPage(1);
+  renderDocConfig(doc);
+  renderDocList();
 }
 
-// ═══════════════════════════════════════
+function removeDocument(id) {
+  S.documents = S.documents.filter(d => d.id !== id);
+  if (S.currentDocId === id) {
+    S.currentDocId = S.documents[0]?.id || null;
+    if (S.currentDocId) selectDocument(S.currentDocId);
+    else renderDocList();
+  } else renderDocList();
+}
+
+// ═══════════════════════════════════════════════
+//  CONFIG UI PER DOCUMENT
+// ═══════════════════════════════════════════════
+function renderDocConfig(doc) {
+  $('cfg-docname').textContent = doc.name;
+  const hasFields = doc.sigFields.length > 0;
+  const hasText = doc.textMatches.length > 0;
+
+  if (hasFields || hasText) {
+    $('detections-area').style.display = 'block';
+    $('role-area').style.display = 'none';
+
+    const parts = [];
+    if (hasFields) parts.push(`${doc.sigFields.length} campo(s) de firma`);
+    if (hasText) parts.push(`${doc.textMatches.length} texto "firma"`);
+    $('detection-summary').innerHTML = `✅ Detectado: ${parts.join(' · ')}`;
+    $('detection-summary').className = 'card green';
+
+    const dlist = $('detect-list');
+    dlist.innerHTML = '';
+    doc.sigFields.forEach((f, i) => {
+      const d = document.createElement('div');
+      d.className = 'detect-item';
+      d.innerHTML = `<span class="dti-type" title="Campo AcroForm">🎯</span>
+        <span class="dti-info">Campo: ${f.name}</span>
+        <span class="dti-page">p.${f.page}</span>`;
+      d.onclick = () => selectDetection('field', i);
+      dlist.appendChild(d);
+    });
+    doc.textMatches.forEach((m, i) => {
+      const d = document.createElement('div');
+      d.className = 'detect-item';
+      d.innerHTML = `<span class="dti-type" title="Texto 'firma'">🔤</span>
+        <span class="dti-info">"${m.text}"</span>
+        <span class="dti-page">p.${m.page}</span>`;
+      d.onclick = () => selectDetection('text', i);
+      dlist.appendChild(d);
+    });
+
+    if (!doc.config) {
+      if (hasFields) selectDetection('field', 0);
+      else selectDetection('text', 0);
+      return;  // selectDetection re-renders
+    }
+  } else {
+    $('detections-area').style.display = 'none';
+    $('role-area').style.display = 'block';
+    if (doc.config?.mode === 'role') {
+      document.querySelectorAll('.role-card').forEach(c => c.classList.toggle('selected', c.dataset.role === doc.config.selection.role));
+    }
+  }
+
+  $('scope-area').style.display = doc.config ? 'block' : 'none';
+  updateScopeHints(doc);
+  markSelectedDetection(doc);
+  drawOverlay();
+
+  $('btn-configure').disabled = !doc.config;
+  $('btn-configure').textContent = doc.status === 'configured' ? '🔄 Actualizar' : '✅ Confirmar';
+}
+
+function selectDetection(type, idx) {
+  const doc = currentDoc();
+  if (!doc) return;
+  const detection = type === 'field' ? doc.sigFields[idx] : doc.textMatches[idx];
+  const role = type === 'field' ? 'Firmante' : 'Firmante';
+
+  doc.config = {
+    mode: type,
+    selection: {
+      fieldIdx: type === 'field' ? idx : undefined,
+      matchIdx: type === 'text' ? idx : undefined,
+      rect: detection.rect, page: detection.page, role,
+    },
+    scope: 'auto', specificPages: [],
+  };
+
+  S.currentPage = detection.page;
+  renderPage(detection.page);
+  renderDocConfig(doc);
+}
+
+function markSelectedDetection(doc) {
+  if (!doc.config) return;
+  const items = $('detect-list').querySelectorAll('.detect-item');
+  items.forEach(el => el.classList.remove('selected'));
+  if (doc.config.mode === 'field') items[doc.config.selection.fieldIdx]?.classList.add('selected');
+  else if (doc.config.mode === 'text') items[doc.sigFields.length + doc.config.selection.matchIdx]?.classList.add('selected');
+}
+
+// ═══════════════════════════════════════════════
 //  ROLE SELECTION
-// ═══════════════════════════════════════
+// ═══════════════════════════════════════════════
 async function selectRole(role) {
-  // Visual selection
-  document.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected'));
-  const rc = document.getElementById('rc-' + role);
-  if (rc) rc.classList.add('selected');
-
-  S.role = role;
+  const doc = currentDoc();
+  if (!doc) return;
+  document.querySelectorAll('.role-card').forEach(c => c.classList.toggle('selected', c.dataset.role === role));
 
   if (role === 'Personalizado') {
-    setStatus('Haz clic y arrastra en el PDF para dibujar el campo de firma', 'busy');
+    setStatus('Dibuja un rectángulo sobre el PDF', 'busy');
     enableDraw();
     return;
   }
 
-  const page = await S.pdfDoc.getPage(S.currentPage);
+  const page = await doc.pdfDoc.getPage(S.currentPage);
   const vp = page.getViewport({ scale: 1 });
   const rect = ROLE_RECTS[role](vp.width, vp.height);
 
-  S.selectedField = { page: S.currentPage, rect, role };
-  refreshCoords();
-  drawSigBox();
-  revealCertPanel();
+  doc.config = {
+    mode: 'role',
+    selection: { role, rect, page: S.currentPage },
+    scope: 'auto', specificPages: [],
+  };
+  renderDocConfig(doc);
 }
 
-// ═══════════════════════════════════════
-//  MANUAL DRAW
-// ═══════════════════════════════════════
 function enableDraw() {
-  S.isDrawing = true;
-  const canvas = document.getElementById('pdf-canvas');
+  const canvas = $('pdf-canvas');
   canvas.style.cursor = 'crosshair';
   canvas.addEventListener('mousedown', onDrawStart);
 }
 
 function onDrawStart(e) {
-  const canvas = document.getElementById('pdf-canvas');
+  const canvas = $('pdf-canvas');
   const r = canvas.getBoundingClientRect();
   S.drawStart = { x: e.clientX - r.left, y: e.clientY - r.top };
   canvas.addEventListener('mousemove', onDrawMove);
@@ -631,31 +733,29 @@ function onDrawStart(e) {
 
 function onDrawMove(e) {
   if (!S.drawStart) return;
-  const canvas = document.getElementById('pdf-canvas');
+  const canvas = $('pdf-canvas');
   const r = canvas.getBoundingClientRect();
   const cx = e.clientX - r.left, cy = e.clientY - r.top;
-  const svg = document.getElementById('sig-overlay');
-  svg.innerHTML = `
-    <rect x="${Math.min(cx,S.drawStart.x)}" y="${Math.min(cy,S.drawStart.y)}"
-      width="${Math.abs(cx-S.drawStart.x)}" height="${Math.abs(cy-S.drawStart.y)}"
-      fill="rgba(59,130,246,.12)" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="5"/>`;
+  $('sig-overlay').innerHTML = `<rect x="${Math.min(cx,S.drawStart.x)}" y="${Math.min(cy,S.drawStart.y)}"
+    width="${Math.abs(cx-S.drawStart.x)}" height="${Math.abs(cy-S.drawStart.y)}"
+    fill="rgba(167,139,250,.15)" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5"/>`;
 }
 
 async function onDrawEnd(e) {
   if (!S.drawStart) return;
-  const canvas = document.getElementById('pdf-canvas');
+  const canvas = $('pdf-canvas');
   canvas.removeEventListener('mousemove', onDrawMove);
   canvas.removeEventListener('mouseup', onDrawEnd);
+  canvas.removeEventListener('mousedown', onDrawStart);
   canvas.style.cursor = 'default';
-  S.isDrawing = false;
 
   const r = canvas.getBoundingClientRect();
   const ex = e.clientX - r.left, ey = e.clientY - r.top;
   const sx = S.drawStart.x, sy = S.drawStart.y;
   S.drawStart = null;
 
-  // Canvas px → PDF pts
-  const page = await S.pdfDoc.getPage(S.currentPage);
+  const doc = currentDoc();
+  const page = await doc.pdfDoc.getPage(S.currentPage);
   const vp = page.getViewport({ scale: S.zoom });
   const scX = vp.width / canvas.width;
   const scY = vp.height / canvas.height;
@@ -665,92 +765,111 @@ async function onDrawEnd(e) {
   const pdfY1 = (canvas.height - Math.max(sy, ey)) * scY / S.zoom;
   const pdfY2 = (canvas.height - Math.min(sy, ey)) * scY / S.zoom;
 
-  S.selectedField = { page: S.currentPage, rect: [pdfX1, pdfY1, pdfX2, pdfY2], role: 'Personalizado' };
-  refreshCoords();
-  drawSigBox();
-  revealCertPanel();
+  doc.config = {
+    mode: 'role',
+    selection: { role: 'Personalizado', rect: [pdfX1, pdfY1, pdfX2, pdfY2], page: S.currentPage },
+    scope: 'auto', specificPages: [],
+  };
+  renderDocConfig(doc);
+  setStatus('Posición fijada', 'ok');
 }
 
-// ═══════════════════════════════════════
-//  OVERLAY
-// ═══════════════════════════════════════
-function refreshCoords() {
-  const f = S.selectedField;
-  if (!f) return;
-  document.getElementById('coords-display').style.display = 'block';
-  document.getElementById('cd-page').textContent = f.page;
-  document.getElementById('cd-xy').textContent =
-    Math.round(f.rect[0]) + ' / ' + Math.round(f.rect[1]) + ' pt';
-  document.getElementById('cd-wh').textContent =
-    Math.round(f.rect[2]-f.rect[0]) + ' × ' + Math.round(f.rect[3]-f.rect[1]) + ' pt';
-  document.getElementById('cd-role').textContent = f.role;
+// ═══════════════════════════════════════════════
+//  SCOPE
+// ═══════════════════════════════════════════════
+function setScope(scope) {
+  const doc = currentDoc();
+  if (!doc?.config) return;
+  doc.config.scope = scope;
+  document.querySelectorAll('.scope-opt').forEach(el => el.classList.toggle('selected', el.dataset.scope === scope));
+  $('pages-input').style.display = scope === 'specific' ? 'block' : 'none';
+  if (scope === 'specific') $('pages-input').focus();
+  drawOverlay();
 }
 
-async function drawSigBox() {
-  const f = S.selectedField;
-  if (!f) return;
-  if (f.page !== S.currentPage) await renderPage(f.page);
-
-  const canvas = document.getElementById('pdf-canvas');
-  const page = await S.pdfDoc.getPage(f.page);
-  const vp = page.getViewport({ scale: S.zoom });
-
-  const sx = canvas.width / vp.width;
-  const sy = canvas.height / vp.height;
-
-  const cx1 = f.rect[0] * S.zoom * sx;
-  const cy1 = canvas.height - f.rect[3] * S.zoom * sy;
-  const cw  = (f.rect[2] - f.rect[0]) * S.zoom * sx;
-  const ch  = (f.rect[3] - f.rect[1]) * S.zoom * sy;
-
-  const svg = document.getElementById('sig-overlay');
-  svg.innerHTML = `
-    <rect x="${cx1}" y="${cy1}" width="${cw}" height="${ch}"
-      fill="rgba(59,130,246,.10)" stroke="#3b82f6" stroke-width="1.5"/>
-    <text x="${cx1+4}" y="${cy1-4}" fill="#3b82f6"
-      font-size="10" font-family="monospace" font-weight="600">✍ ${f.role}</text>`;
+function updatePagesInput() {
+  const doc = currentDoc();
+  if (!doc?.config) return;
+  doc.config.specificPages = parsePageList($('pages-input').value, doc.totalPages);
+  drawOverlay();
 }
 
-function resetField() {
-  S.selectedField = null;
-  document.getElementById('coords-display').style.display = 'none';
-  document.getElementById('sig-overlay').innerHTML = '';
-  document.getElementById('panel-cert').style.display = 'none';
-  document.getElementById('panel-sign').style.display = 'none';
-  goStep(2);
+function parsePageList(str, max) {
+  const pages = new Set();
+  str.split(',').forEach(part => {
+    part = part.trim();
+    if (!part) return;
+    if (part.includes('-')) {
+      const [a, b] = part.split('-').map(n => parseInt(n));
+      if (!isNaN(a) && !isNaN(b)) for (let i = Math.min(a,b); i <= Math.max(a,b); i++) if (i >= 1 && i <= max) pages.add(i);
+    } else {
+      const n = parseInt(part);
+      if (!isNaN(n) && n >= 1 && n <= max) pages.add(n);
+    }
+  });
+  return Array.from(pages).sort((a,b) => a-b);
 }
 
-// ═══════════════════════════════════════
-//  RENDER PAGE
-// ═══════════════════════════════════════
+function updateScopeHints(doc) {
+  if (!doc.config) return;
+  $('scope-auto-hint').textContent = 'pág. ' + doc.config.selection.page;
+  $('scope-all-hint').textContent = doc.totalPages + ' pág.';
+}
+
+// ═══════════════════════════════════════════════
+//  CONFIRM CONFIG
+// ═══════════════════════════════════════════════
+function confirmConfig() {
+  const doc = currentDoc();
+  if (!doc?.config) return;
+  if (doc.config.scope === 'specific' && doc.config.specificPages.length === 0) {
+    setStatus('Introduce páginas válidas', 'error');
+    return;
+  }
+  doc.status = 'configured';
+  renderDocList();
+  setStatus('Configurado: ' + doc.name, 'ok');
+
+  const pending = S.documents.find(d => d.status === 'pending' && d.id !== doc.id);
+  if (pending) selectDocument(pending.id);
+  else updateSignAllPanel();
+}
+
+// ═══════════════════════════════════════════════
+//  CANVAS RENDER
+// ═══════════════════════════════════════════════
 async function renderPage(n) {
+  const doc = currentDoc();
+  if (!doc) return;
   S.currentPage = n;
-  const page = await S.pdfDoc.getPage(n);
+  const page = await doc.pdfDoc.getPage(n);
   const vp = page.getViewport({ scale: S.zoom });
-  const canvas = document.getElementById('pdf-canvas');
+  const canvas = $('pdf-canvas');
   const ctx = canvas.getContext('2d');
   canvas.width  = vp.width;
   canvas.height = vp.height;
 
-  const svg = document.getElementById('sig-overlay');
+  const svg = $('sig-overlay');
   svg.setAttribute('width', vp.width);
   svg.setAttribute('height', vp.height);
   svg.setAttribute('viewBox', '0 0 ' + vp.width + ' ' + vp.height);
 
   await page.render({ canvasContext: ctx, viewport: vp }).promise;
 
-  document.getElementById('page-info').textContent = n + ' / ' + S.totalPages;
-  document.getElementById('btn-prev').disabled = n <= 1;
-  document.getElementById('btn-next').disabled = n >= S.totalPages;
-  document.getElementById('zoom-info').textContent = Math.round(S.zoom * 100) + '%';
+  $('page-info').textContent = n + ' / ' + doc.totalPages;
+  $('btn-prev').disabled = n <= 1;
+  $('btn-next').disabled = n >= doc.totalPages;
+  $('zoom-info').textContent = Math.round(S.zoom * 100) + '%';
+  $('viewer-hint').textContent = doc.name;
 
-  if (S.selectedField && S.selectedField.page === n) drawSigBox();
-  else svg.innerHTML = '';
+  drawOverlay();
 }
 
 function changePage(d) {
+  const doc = currentDoc();
+  if (!doc) return;
   const n = S.currentPage + d;
-  if (n >= 1 && n <= S.totalPages) renderPage(n);
+  if (n >= 1 && n <= doc.totalPages) renderPage(n);
 }
 
 function changeZoom(d) {
@@ -758,195 +877,305 @@ function changeZoom(d) {
   renderPage(S.currentPage);
 }
 
-// ═══════════════════════════════════════
-//  CERT PANEL
-// ═══════════════════════════════════════
-function revealCertPanel() {
-  document.getElementById('panel-cert').style.display = 'block';
-  goStep(3);
-  setStatus('Carga el certificado .p12 / .pfx', '');
-  setTimeout(() => document.getElementById('panel-cert').scrollIntoView({ behavior: 'smooth' }), 150);
+async function drawOverlay() {
+  const doc = currentDoc();
+  const svg = $('sig-overlay');
+  svg.innerHTML = '';
+  if (!doc) return;
+
+  const canvas = $('pdf-canvas');
+  const page = await doc.pdfDoc.getPage(S.currentPage);
+  const vp = page.getViewport({ scale: S.zoom });
+
+  const drawRect = (rect, color, label, solid=false) => {
+    const sx = canvas.width / vp.width;
+    const sy = canvas.height / vp.height;
+    const cx1 = rect[0] * S.zoom * sx;
+    const cy1 = canvas.height - rect[3] * S.zoom * sy;
+    const cw  = (rect[2] - rect[0]) * S.zoom * sx;
+    const ch  = (rect[3] - rect[1]) * S.zoom * sy;
+    const fill = solid ? color + '22' : 'transparent';
+    const strokeDash = solid ? '' : 'stroke-dasharray="3,3"';
+    svg.innerHTML += `<rect x="${cx1}" y="${cy1}" width="${cw}" height="${ch}"
+      fill="${fill}" stroke="${color}" stroke-width="${solid ? 1.5 : 1}" ${strokeDash}/>`;
+    if (label && solid) {
+      svg.innerHTML += `<text x="${cx1+3}" y="${cy1-3}" fill="${color}" font-size="9" font-family="monospace" font-weight="600">${label}</text>`;
+    }
+  };
+
+  doc.sigFields.filter(f => f.page === S.currentPage).forEach(f => drawRect(f.rect, '#64748b', null, false));
+  doc.textMatches.filter(m => m.page === S.currentPage).forEach(m => drawRect(m.rect, '#64748b', null, false));
+
+  if (doc.config && shouldSignPage(doc, S.currentPage)) {
+    const role = doc.config.selection.role || 'Firmante';
+    const rc = ROLE_COLORS[role] || ROLE_COLORS.Firmante;
+    const color = `rgb(${Math.round(rc[0]*255)},${Math.round(rc[1]*255)},${Math.round(rc[2]*255)})`;
+    drawRect(doc.config.selection.rect, color, '✍ ' + role.toUpperCase(), true);
+  }
 }
 
-document.getElementById('cert-pass').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') validateCert();
-});
+function shouldSignPage(doc, pageNum) {
+  if (!doc.config) return false;
+  if (doc.config.scope === 'auto') return pageNum === doc.config.selection.page;
+  if (doc.config.scope === 'all') return true;
+  if (doc.config.scope === 'specific') return doc.config.specificPages.includes(pageNum);
+  return false;
+}
+
+function planSignatures(doc) {
+  if (!doc.config) return [];
+  const pages = [];
+  if (doc.config.scope === 'auto') pages.push(doc.config.selection.page);
+  else if (doc.config.scope === 'all') for (let i = 1; i <= doc.totalPages; i++) pages.push(i);
+  else if (doc.config.scope === 'specific') pages.push(...doc.config.specificPages);
+  return Array.from(new Set(pages)).map(p => ({ page: p, rect: doc.config.selection.rect }));
+}
+
+// ═══════════════════════════════════════════════
+//  CERT PANEL
+// ═══════════════════════════════════════════════
+$('cert-pass').addEventListener('keydown', e => { if (e.key === 'Enter') validateCert(); });
+
+function showCertPill(name) {
+  const el = $('cert-pill');
+  el.style.display = 'block';
+  el.innerHTML = `<div class="file-pill">
+    <span>🔐</span>
+    <span class="fp-name" title="${name}">${name}</span>
+    <span class="fp-del" onclick="resetCert()">×</span>
+  </div>`;
+}
 
 async function validateCert() {
-  if (!S.certBytes) return;
-  const pass = document.getElementById('cert-pass').value;
-  setStatus('Validando certificado...', 'busy');
-  const infoEl = document.getElementById('cert-info');
+  if (!S.cert.bytes) return;
+  const pass = $('cert-pass').value;
+  setStatus('Validando...', 'busy');
+  const infoEl = $('cert-info');
   infoEl.style.display = 'block';
 
   try {
     const forge = window.forge;
-    const buf = forge.util.createBuffer(new Uint8Array(S.certBytes));
+    const buf = forge.util.createBuffer(new Uint8Array(S.cert.bytes));
     const p12asn = forge.asn1.fromDer(buf);
     const p12 = forge.pkcs12.pkcs12FromAsn1(p12asn, false, pass);
-
     const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag];
     const keyBags  = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag];
+    if (!certBags?.[0]) throw new Error('No se encontró certificado');
+    if (!keyBags?.[0]) throw new Error('No se encontró clave privada');
 
-    if (!certBags || !certBags[0]) throw new Error('No se encontró certificado en el .p12');
-    if (!keyBags  || !keyBags[0])  throw new Error('No se encontró clave privada en el .p12');
-
-    S.certObj  = certBags[0].cert;
-    S.certKey  = keyBags[0].key;
-    S.certName = S.certObj.subject.getField('CN')?.value || 'Firmante';
-    const org  = S.certObj.subject.getField('O')?.value  || '';
-    const validTo = S.certObj.validity.notAfter.toLocaleDateString('es-ES');
+    S.cert.obj = certBags[0].cert;
+    S.cert.key = keyBags[0].key;
+    S.cert.name = S.cert.obj.subject.getField('CN')?.value || 'Firmante';
+    S.cert.validated = true;
+    const org = S.cert.obj.subject.getField('O')?.value || '';
+    const validTo = S.cert.obj.validity.notAfter.toLocaleDateString('es-ES');
 
     infoEl.innerHTML = `<div class="card green">
-      ✅ Certificado válido<br>
-      <strong style="color:var(--text)">${S.certName}</strong><br>
+      ✅ <strong style="color:var(--text)">${S.cert.name}</strong><br>
       <span style="color:var(--muted)">${org}</span><br>
-      <span style="color:var(--muted)">Válido hasta: ${validTo}</span>
+      <span style="color:var(--muted)">Hasta: ${validTo}</span>
     </div>`;
-
-    revealSignPanel(S.certName, org);
-    setStatus('Certificado válido — ' + S.certName, 'ok');
+    setStatus('Certificado válido', 'ok');
+    updateSignAllPanel();
   } catch(err) {
     infoEl.innerHTML = `<div class="card red">❌ ${err.message}</div>`;
-    setStatus('Error de certificado: ' + err.message, 'error');
+    setStatus('Error: ' + err.message, 'error');
+    S.cert.validated = false;
+    updateSignAllPanel();
   }
 }
 
-function revealSignPanel(cn, org) {
-  const f = S.selectedField;
-  document.getElementById('sign-summary').innerHTML =
-    `📄 <strong>${S.pdfName}.pdf</strong><br>
-     ✍️ ${cn}${org ? ' — '+org : ''}<br>
-     📍 Pág. ${f.page} · Rol: ${f.role}`;
-  document.getElementById('panel-sign').style.display = 'block';
-  document.getElementById('btn-sign').disabled = false;
-  goStep(4);
-  setTimeout(() => document.getElementById('panel-sign').scrollIntoView({ behavior: 'smooth' }), 150);
+function resetCert() {
+  S.cert = { bytes: null, obj: null, key: null, name: '', validated: false };
+  $('cert-pill').style.display = 'none';
+  $('cert-info').style.display = 'none';
+  $('cert-pass').value = '';
+  $('btn-validate').disabled = true;
+  $('file-cert').value = '';
+  updateSignAllPanel();
 }
 
-// ═══════════════════════════════════════
-//  SIGN
-// ═══════════════════════════════════════
-async function signDocument() {
-  if (!S.pdfBytes || !S.certObj || !S.selectedField) return;
-  const btn = document.getElementById('btn-sign');
-  btn.disabled = true;
-  document.getElementById('sign-progress').style.display = 'flex';
-  document.getElementById('sign-msg').textContent = 'Firmando...';
-  setStatus('Aplicando firma digital...', 'busy');
+// ═══════════════════════════════════════════════
+//  SIGN-ALL PANEL
+// ═══════════════════════════════════════════════
+function updateSignAllPanel() {
+  const panel = $('sign-all-panel');
+  if (!S.documents.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
 
-  try {
-    document.getElementById('sign-msg').textContent = 'Generando firma PKCS#7...';
-    const signedBuf = await buildSignedPdf(
-      S.pdfBytes, S.certObj, S.certKey, S.selectedField
-    );
+  const configured = S.documents.filter(d => d.status === 'configured');
+  const pending    = S.documents.filter(d => d.status === 'pending');
+  const done       = S.documents.filter(d => d.status === 'done');
 
-    document.getElementById('sign-msg').textContent = 'Descargando...';
-    const blob = new Blob([signedBuf], { type: 'application/pdf' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = S.pdfName + '_FIRMADO.pdf';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+  let summary = '';
+  if (configured.length) summary += `<div style="color:var(--accent)">${configured.length} listo(s)</div>`;
+  if (pending.length) summary += `<div style="color:var(--amber)">${pending.length} pend. configurar</div>`;
+  if (done.length) summary += `<div style="color:var(--green)">${done.length} firmado(s)</div>`;
+  if (!S.cert.validated) summary += `<div style="color:var(--muted)">⚠ Falta validar cert.</div>`;
 
-    document.getElementById('sign-progress').style.display = 'none';
-    document.getElementById('sign-done').style.display = 'block';
-    setStatus('✅ Descargado: ' + S.pdfName + '_FIRMADO.pdf', 'ok');
+  $('sign-summary-text').innerHTML = summary;
+  $('btn-sign-all').disabled = !(configured.length > 0 && S.cert.validated);
+  $('btn-sign-all').textContent = '✍️ FIRMAR' + (configured.length > 0 ? ' (' + configured.length + ')' : '');
+}
 
-    // Refresh viewer with signed PDF
-    S.pdfBytes = signedBuf;
-    S.pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(signedBuf) }).promise;
-    S.totalPages = S.pdfDoc.numPages;
-    await renderPage(S.selectedField.page);
+// ═══════════════════════════════════════════════
+//  SIGN ALL
+// ═══════════════════════════════════════════════
+async function signAllDocuments() {
+  if (!S.cert.validated) { setStatus('Valida el certificado', 'error'); return; }
+  const toSign = S.documents.filter(d => d.status === 'configured');
+  if (!toSign.length) return;
 
-  } catch(err) {
-    document.getElementById('sign-progress').style.display = 'none';
-    btn.disabled = false;
-    const msg = err.message || String(err);
-    document.getElementById('sign-summary').innerHTML += `<br><span style="color:var(--red)">❌ ${msg}</span>`;
-    setStatus('Error: ' + msg, 'error');
-    console.error(err);
+  $('btn-sign-all').disabled = true;
+  $('sign-progress-list').style.display = 'block';
+
+  const plist = $('sign-progress-list');
+  plist.innerHTML = '';
+  const rows = {};
+  toSign.forEach(doc => {
+    const row = document.createElement('div');
+    row.className = 'progress-item';
+    row.innerHTML = `<span style="width:12px">⏳</span>
+      <span class="pi-name">${doc.name}</span>`;
+    plist.appendChild(row);
+    rows[doc.id] = row;
+  });
+
+  const signed = [];
+  for (const doc of toSign) {
+    doc.status = 'signing';
+    rows[doc.id].firstElementChild.outerHTML = '<div class="spinner"></div>';
+    renderDocList();
+
+    try {
+      setStatus('Firmando ' + doc.name + '...', 'busy');
+      const signedBytes = await signDocument(doc);
+      doc.signedBytes = signedBytes;
+      doc.status = 'done';
+      signed.push(doc);
+      rows[doc.id].firstElementChild.outerHTML = '<span style="width:12px">✅</span>';
+    } catch(err) {
+      doc.status = 'error';
+      doc.error = err.message;
+      rows[doc.id].firstElementChild.outerHTML = '<span style="width:12px" title="' + err.message + '">❌</span>';
+      console.error(err);
+    }
+    renderDocList();
   }
+
+  if (signed.length === 1) {
+    downloadFile(signed[0].signedBytes, signed[0].name.replace(/\.pdf$/i, '') + '_FIRMADO.pdf');
+    setStatus('✅ Firmado y descargado', 'ok');
+  } else if (signed.length > 1) {
+    setStatus('Creando ZIP con ' + signed.length + ' PDFs...', 'busy');
+    const zip = new JSZip();
+    signed.forEach(doc => {
+      zip.file(doc.name.replace(/\.pdf$/i, '') + '_FIRMADO.pdf', doc.signedBytes);
+    });
+    const blob = await zip.generateAsync({ type: 'blob' });
+    downloadFile(blob, 'PDFs_FIRMADOS_' + new Date().toISOString().slice(0,10) + '.zip');
+    setStatus('✅ ZIP con ' + signed.length + ' PDFs descargado', 'ok');
+  }
+  $('btn-reset').style.display = 'block';
 }
 
-async function buildSignedPdf(pdfBuf, cert, privateKey, field) {
+function downloadFile(data, filename) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+}
+
+// ═══════════════════════════════════════════════
+//  SIGN ONE DOC
+// ═══════════════════════════════════════════════
+async function signDocument(doc) {
   const { PDFDocument, StandardFonts, rgb } = PDFLib;
   const forge = window.forge;
+  const cert = S.cert.obj;
+  const privateKey = S.cert.key;
 
-  // ── 1. Compute SHA-256 hash of original PDF
   const md = forge.md.sha256.create();
-  md.update(forge.util.createBuffer(new Uint8Array(pdfBuf)));
+  md.update(forge.util.createBuffer(new Uint8Array(doc.bytes)));
   const docHash = md.digest().toHex();
 
-  // ── 2. Build PKCS#7 signed-data with detached signature
   const p7 = forge.pkcs7.createSignedData();
   p7.content = forge.util.createBuffer(docHash, 'utf8');
   p7.addCertificate(cert);
   p7.addSigner({
-    key: privateKey,
-    certificate: cert,
+    key: privateKey, certificate: cert,
     digestAlgorithm: forge.pki.oids.sha256,
     authenticatedAttributes: [
       { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
       { type: forge.pki.oids.messageDigest },
-      { type: forge.pki.oids.signingTime, value: new Date() }
-    ]
+      { type: forge.pki.oids.signingTime, value: new Date() },
+    ],
   });
   p7.sign({ detached: true });
-  const sigDer = forge.asn1.toDer(p7.toAsn1()).getBytes();
-  const sigB64 = btoa(sigDer);
+  const sigB64 = btoa(forge.asn1.toDer(p7.toAsn1()).getBytes());
 
-  // ── 3. Load & modify PDF
-  const pdfDoc = await PDFDocument.load(pdfBuf);
+  const pdfDoc = await PDFDocument.load(doc.bytes);
   const pages  = pdfDoc.getPages();
-  const pg     = pages[field.page - 1];
-  const { width: PW, height: PH } = pg.getSize();
-
   const font     = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-  const [x1, y1, x2, y2] = field.rect;
-  const bw = x2 - x1;
-  const bh = y2 - y1;
 
   const cn    = cert.subject.getField('CN')?.value || 'Firmante';
   const org   = cert.subject.getField('O')?.value  || '';
   const now   = new Date();
-  const dateStr = now.toLocaleString('es-ES', {
-    year:'numeric', month:'2-digit', day:'2-digit',
-    hour:'2-digit', minute:'2-digit', second:'2-digit'
-  });
+  const dateStr = now.toLocaleString('es-ES', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
   const validTo = cert.validity.notAfter.toLocaleDateString('es-ES');
 
-  const [cr, cg, cb] = ROLE_COLORS[field.role] || ROLE_COLORS['Firmante'];
+  const plan = planSignatures(doc);
+  const role = doc.config.selection.role || 'Firmante';
+
+  for (const entry of plan) {
+    const pg = pages[entry.page - 1];
+    if (!pg) continue;
+    drawSignatureBox(pg, entry.rect, role, cn, org, dateStr, docHash, font, fontBold, rgb);
+  }
+
+  pdfDoc.setSubject('Firmado por ' + cn + ' | ' + role + ' | ' + dateStr);
+  pdfDoc.setKeywords([
+    'firmante:'+cn, 'rol:'+role, 'fecha:'+dateStr,
+    'sha256:'+docHash, 'paginas:'+plan.map(p=>p.page).join(','),
+    'p7sig:'+sigB64.slice(0,60),
+  ]);
+  pdfDoc.setCreator('Firma Digital Intelec v2.0');
+  pdfDoc.setProducer(cn + ' | Válido hasta: ' + validTo);
+
+  return (await pdfDoc.save()).buffer;
+}
+
+function drawSignatureBox(pg, rect, role, cn, org, dateStr, docHash, font, fontBold, rgb) {
+  const [x1, y1, x2, y2] = rect;
+  const bw = x2 - x1;
+  const bh = y2 - y1;
+
+  const [cr, cg, cb] = ROLE_COLORS[role] || ROLE_COLORS.Firmante;
   const accentC = rgb(cr, cg, cb);
   const whiteC  = rgb(1, 1, 1);
   const darkC   = rgb(0.15, 0.15, 0.15);
   const mutedC  = rgb(0.45, 0.45, 0.45);
   const bgC     = rgb(0.965, 0.972, 0.99);
 
-  // Shadow
   pg.drawRectangle({ x: x1+2, y: y1-2, width: bw, height: bh, color: rgb(0.72, 0.72, 0.72) });
-  // Background
   pg.drawRectangle({ x: x1, y: y1, width: bw, height: bh, color: bgC, borderColor: accentC, borderWidth: 1.2 });
-  // Header bar
   const barH = Math.min(15, bh * 0.22);
   pg.drawRectangle({ x: x1, y: y2 - barH, width: bw, height: barH, color: accentC });
 
-  // Header texts
   const hs = Math.min(6.5, barH * 0.55);
   pg.drawText('FIRMADO DIGITALMENTE', { x: x1+4, y: y2-barH+3, size: hs, font: fontBold, color: whiteC });
-  const roleStr = (field.role || 'FIRMANTE').toUpperCase();
+  const roleStr = (role || 'FIRMANTE').toUpperCase();
   pg.drawText(roleStr, { x: x2 - roleStr.length * hs * 0.56 - 4, y: y2-barH+3, size: hs, font: fontBold, color: rgb(1,1,0.82) });
 
-  // Content
   const ls = Math.min(9.5, (bh - barH - 4) / 5);
   const fs = Math.min(7.5, ls * 0.88);
   const fm = Math.max(5, fs * 0.82);
   let cy = y2 - barH - ls;
-
   const maxW = Math.floor(bw / (fs * 0.54));
   const clip = s => s.length > maxW ? s.slice(0, maxW-2)+'..' : s;
 
@@ -954,96 +1183,40 @@ async function buildSignedPdf(pdfBuf, cert, privateKey, field) {
   cy -= ls * 1.05;
   pg.drawText(clip(cn), { x: x1+4, y: cy, size: fs, font: fontBold, color: accentC });
   cy -= ls;
-  if (org) {
-    pg.drawText(clip(org), { x: x1+4, y: cy, size: fm, font, color: darkC });
-    cy -= ls;
-  }
+  if (org) { pg.drawText(clip(org), { x: x1+4, y: cy, size: fm, font, color: darkC }); cy -= ls; }
   pg.drawText('Fecha: ' + dateStr, { x: x1+4, y: cy, size: fm, font, color: darkC });
   cy -= ls;
   pg.drawLine({ start:{x:x1+4,y:cy+2}, end:{x:x2-4,y:cy+2}, thickness:0.4, color:rgb(0.8,0.8,0.8) });
   cy -= ls * 0.75;
   pg.drawText('SHA256: ' + docHash.slice(0,22)+'...', { x: x1+4, y: cy, size: Math.max(4.5, fm-0.8), font, color: mutedC });
 
-  // Seal
   const sealR = Math.min(16, bh * 0.23);
   pg.drawEllipse({ x: x2-20, y: y1+20, xScale: sealR, yScale: sealR, borderColor: accentC, borderWidth: 1.2, color: bgC });
   pg.drawText('✓', { x: x2-24, y: y1+15, size: sealR * 0.95, font: fontBold, color: accentC });
-
-  // ── 4. Embed metadata
-  pdfDoc.setSubject('Firmado por ' + cn + ' | ' + field.role + ' | ' + dateStr);
-  pdfDoc.setKeywords(['firmante:'+cn, 'rol:'+field.role, 'fecha:'+dateStr, 'sha256:'+docHash, 'p7sig:'+sigB64.slice(0,60)]);
-  pdfDoc.setCreator('Firma Digital Intelec v2.0');
-  pdfDoc.setProducer(cn + ' | Válido hasta: ' + validTo);
-
-  return (await pdfDoc.save()).buffer;
 }
 
-// ═══════════════════════════════════════
-//  RESETS / HELPERS
-// ═══════════════════════════════════════
-function showFilePill(id, name, icon, onDel) {
-  const el = document.getElementById(id);
-  el.style.display = 'block';
-  el.innerHTML = `<div class="file-pill">
-    <span class="fp-icon">${icon}</span>
-    <span class="fp-name" title="${name}">${name}</span>
-    <span class="fp-del" onclick="(${onDel.toString()})()">×</span>
-  </div>`;
-}
-
-function resetPdf() {
-  S.pdfDoc = S.pdfBytes = null;
-  S.sigFields = [];
-  S.selectedField = null;
-  document.getElementById('pdf-file-pill').style.display = 'none';
-  document.getElementById('pdf-viewer').style.display = 'none';
-  document.getElementById('empty-state').style.display = 'flex';
-  document.getElementById('panel-field').style.display = 'none';
-  document.getElementById('panel-cert').style.display = 'none';
-  document.getElementById('panel-sign').style.display = 'none';
-  document.getElementById('file-pdf').value = '';
-  goStep(1);
-  setStatus('Listo', '');
-}
-
-function resetCert() {
-  S.certBytes = S.certObj = S.certKey = null;
-  document.getElementById('cert-file-pill').style.display = 'none';
-  document.getElementById('cert-info').style.display = 'none';
-  document.getElementById('cert-pass').value = '';
-  document.getElementById('btn-validate').disabled = true;
-  document.getElementById('panel-sign').style.display = 'none';
-  document.getElementById('file-cert').value = '';
-  goStep(3);
-}
-
+// ═══════════════════════════════════════════════
+//  RESET
+// ═══════════════════════════════════════════════
 function resetAll() {
-  resetPdf();
+  S.documents = [];
+  S.currentDocId = null;
+  S.currentPage = 1;
+  S.zoom = 1.0;
   resetCert();
-  S.role = '';
-  document.getElementById('sign-done').style.display = 'none';
-  document.getElementById('sign-progress').style.display = 'none';
-  document.getElementById('btn-sign').disabled = true;
-  document.getElementById('role-selector').style.display = 'none';
-  document.getElementById('coords-display').style.display = 'none';
-  document.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected'));
-  goStep(1);
-  setStatus('Listo para nueva firma', '');
+  $('sign-progress-list').style.display = 'none';
+  $('sign-progress-list').innerHTML = '';
+  $('btn-reset').style.display = 'none';
+  renderDocList();
+  setStatus('Listo para nueva tanda', '');
 }
 
-// ═══════════════════════════════════════
+// ═══════════════════════════════════════════════
 //  INIT
-// ═══════════════════════════════════════
-window.addEventListener('load', function() {
-  // Intentar inicializar Office.js.
-  // Si no hay entorno Office (navegador normal), Office.onReady
-  // simplemente nunca llama al callback con host=Outlook.
-  try {
-    initOffice();
-  } catch(e) {
-    console.log('Sin entorno Office — modo standalone');
-  }
-  setStatus('Listo — arrastra un PDF o cárgalo desde Outlook', '');
+// ═══════════════════════════════════════════════
+window.addEventListener('load', () => {
+  try { initOffice(); } catch(e) { console.log('Sin Office'); }
+  setStatus('Listo — añade PDFs para comenzar', '');
 });
 </script>
 </body>
