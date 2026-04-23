@@ -1,0 +1,93 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "625236d9-24ba-438b-9996-e841daa5eaa4",
+  "developer": {
+    "name": "Intelec Spain",
+    "websiteUrl": "https://www.intelecsl.com",
+    "privacyUrl": "https://www.intelecsl.com/privacidad",
+    "termsOfUseUrl": "https://www.intelecsl.com/terminos"
+  },
+  "name": {
+    "short": "Firma Digital",
+    "full": "Firma Digital Intelec"
+  },
+  "description": {
+    "short": "Firma PDFs con certificado digital",
+    "full": "Firma documentos PDF adjuntos con tu certificado digital (.p12/.pfx) desde Outlook."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#004E98",
+  "validDomains": [
+    "intelecsl.github.io"
+  ],
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        { "name": "MailboxItem.Read.User", "type": "Delegated" }
+      ]
+    }
+  },
+  "extensions": [
+    {
+      "requirements": {
+        "scopes": ["mail"],
+        "capabilities": [{ "name": "Mailbox", "minVersion": "1.3" }]
+      },
+      "runtimes": [
+        {
+          "requirements": { "capabilities": [{ "name": "Mailbox", "minVersion": "1.3" }] },
+          "id": "TaskPaneRuntime",
+          "type": "general",
+          "code": { "page": "https://intelecsl.github.io/intelec-firma/index.html" },
+          "lifetime": "short",
+          "actions": [
+            { "id": "ShowTaskPane", "type": "openPage", "view": "homepage" }
+          ]
+        }
+      ],
+      "ribbons": [
+        {
+          "contexts": ["mailRead", "mailCompose"],
+          "tabs": [
+            {
+              "builtInTabId": "TabDefault",
+              "groups": [
+                {
+                  "id": "msgGroup",
+                  "label": "Firma Digital",
+                  "icons": [
+                    { "size": 16, "url": "https://intelecsl.github.io/intelec-firma/icon-16.png" },
+                    { "size": 32, "url": "https://intelecsl.github.io/intelec-firma/icon-32.png" },
+                    { "size": 80, "url": "https://intelecsl.github.io/intelec-firma/icon-64.png" }
+                  ],
+                  "controls": [
+                    {
+                      "id": "msgOpenPaneBtn",
+                      "type": "button",
+                      "label": "Firmar PDF",
+                      "icons": [
+                        { "size": 16, "url": "https://intelecsl.github.io/intelec-firma/icon-16.png" },
+                        { "size": 32, "url": "https://intelecsl.github.io/intelec-firma/icon-32.png" },
+                        { "size": 80, "url": "https://intelecsl.github.io/intelec-firma/icon-64.png" }
+                      ],
+                      "supertip": {
+                        "title": "Firma Digital Intelec",
+                        "description": "Firma PDFs adjuntos con tu certificado digital."
+                      },
+                      "actionId": "ShowTaskPane"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
