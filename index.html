@@ -1128,7 +1128,8 @@ async function signDocument(doc) {
       ],
     });
     p7.sign({ detached: true });
-    sigB64 = btoa(forge.asn1.toDer(p7.toAsn1()).getBytes());
+    // forge.util.encode64 maneja correctamente strings binarias (btoa falla con chars > 0xFF)
+    sigB64 = forge.util.encode64(forge.asn1.toDer(p7.toAsn1()).getBytes());
   } catch(e) {
     throw new Error('PKCS#7 firma: ' + (e.message || e));
   }
