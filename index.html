@@ -468,7 +468,9 @@ async function addDocument(name, buf) {
   setStatus('Analizando ' + name + '...', 'busy');
 
   try {
-    doc.pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    // Copia limpia: los buffers de Outlook/FileReader pueden tener offset
+    const safeBuf = new Uint8Array(new Uint8Array(buf)).buffer;
+    doc.pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(safeBuf) }).promise;
     doc.totalPages = doc.pdfDoc.numPages;
     doc.sigFields = await detectSigFields(doc.pdfDoc);
     doc.textMatches = await detectTextMatches(doc.pdfDoc);
@@ -560,7 +562,7 @@ function renderDocList() {
     else if (doc.status === 'configured') { badge = '<span class="di-badge configured">Listo</span>'; icon = '✓'; }
     else if (doc.status === 'signing') { badge = '<div class="spinner"></div>'; icon = '✍️'; }
     else if (doc.status === 'done') { badge = '<span class="di-badge done">OK</span>'; icon = '✅'; }
-    else if (doc.status === 'error') { badge = '<span class="di-badge error">Err</span>'; icon = '❌'; }
+    else if (doc.status === 'error') { badge = '<span class="di-badge error" title="' + (doc.error||'Error desconocido').replace(/"/g,'&quot;') + '">Err</span>'; icon = '❌'; }
 
     item.innerHTML = `<span class="di-icon">${icon}</span>
       <span class="di-name" title="${doc.name}">${doc.name}</span>
@@ -1056,9 +1058,14 @@ async function signAllDocuments() {
       rows[doc.id].firstElementChild.outerHTML = '<span style="width:12px">✅</span>';
     } catch(err) {
       doc.status = 'error';
-      doc.error = err.message;
-      rows[doc.id].firstElementChild.outerHTML = '<span style="width:12px" title="' + err.message + '">❌</span>';
-      console.error(err);
+      doc.error = err.message || String(err);
+      rows[doc.id].firstElementChild.outerHTML = '<span style="width:12px">❌</span>';
+      // Añadir segunda línea con el error completo
+      const errLine = document.createElement('div');
+      errLine.style.cssText = 'padding:3px 6px 6px 20px;color:var(--red);font-family:var(--mono);font-size:9px;line-height:1.3;word-break:break-word;background:rgba(239,68,68,.06);border-left:2px solid var(--red);margin:2px 0';
+      errLine.textContent = '⚠ ' + doc.error;
+      rows[doc.id].insertAdjacentElement('afterend', errLine);
+      console.error('Sign error for', doc.name, err);
     }
     renderDocList();
   }
@@ -1099,29 +1106,47 @@ async function signDocument(doc) {
   const cert = S.cert.obj;
   const privateKey = S.cert.key;
 
+  // Garantizar copia limpia del buffer (evita problemas con offset/detach de Outlook)
+  const safeBytes = new Uint8Array(new Uint8Array(doc.bytes)).buffer;
+
   const md = forge.md.sha256.create();
-  md.update(forge.util.createBuffer(new Uint8Array(doc.bytes)));
+  md.update(forge.util.createBuffer(new Uint8Array(safeBytes)));
   const docHash = md.digest().toHex();
 
-  const p7 = forge.pkcs7.createSignedData();
-  p7.content = forge.util.createBuffer(docHash, 'utf8');
-  p7.addCertificate(cert);
-  p7.addSigner({
-    key: privateKey, certificate: cert,
-    digestAlgorithm: forge.pki.oids.sha256,
-    authenticatedAttributes: [
-      { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
-      { type: forge.pki.oids.messageDigest },
-      { type: forge.pki.oids.signingTime, value: new Date() },
-    ],
-  });
-  p7.sign({ detached: true });
-  const sigB64 = btoa(forge.asn1.toDer(p7.toAsn1()).getBytes());
+  let p7, sigB64;
+  try {
+    p7 = forge.pkcs7.createSignedData();
+    p7.content = forge.util.createBuffer(docHash, 'utf8');
+    p7.addCertificate(cert);
+    p7.addSigner({
+      key: privateKey, certificate: cert,
+      digestAlgorithm: forge.pki.oids.sha256,
+      authenticatedAttributes: [
+        { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
+        { type: forge.pki.oids.messageDigest },
+        { type: forge.pki.oids.signingTime, value: new Date() },
+      ],
+    });
+    p7.sign({ detached: true });
+    sigB64 = btoa(forge.asn1.toDer(p7.toAsn1()).getBytes());
+  } catch(e) {
+    throw new Error('PKCS#7 firma: ' + (e.message || e));
+  }
 
-  const pdfDoc = await PDFDocument.load(doc.bytes);
-  const pages  = pdfDoc.getPages();
-  const font     = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  let pdfDoc;
+  try {
+    pdfDoc = await PDFDocument.load(safeBytes, { ignoreEncryption: true });
+  } catch(e) {
+    throw new Error('PDF load: ' + (e.message || e));
+  }
+  let pages, font, fontBold;
+  try {
+    pages = pdfDoc.getPages();
+    font     = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  } catch(e) {
+    throw new Error('PDF fonts: ' + (e.message || e));
+  }
 
   const cn    = cert.subject.getField('CN')?.value || 'Firmante';
   const org   = cert.subject.getField('O')?.value  || '';
@@ -1147,7 +1172,11 @@ async function signDocument(doc) {
   pdfDoc.setCreator('Firma Digital Intelec v2.0');
   pdfDoc.setProducer(cn + ' | Válido hasta: ' + validTo);
 
-  return (await pdfDoc.save()).buffer;
+  try {
+    return (await pdfDoc.save()).buffer;
+  } catch(e) {
+    throw new Error('PDF save: ' + (e.message || e));
+  }
 }
 
 function drawSignatureBox(pg, rect, role, cn, org, dateStr, docHash, font, fontBold, rgb) {
