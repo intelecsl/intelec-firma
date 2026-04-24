@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Firma Digital — Intelec v2.12</title>
+<title>Firma Digital — Intelec v2.13</title>
 
 <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -150,7 +150,7 @@ input:focus { border-color: var(--accent); }
   <header>
     <div class="logo">✍️</div>
     <div>
-      <div class="h-title">FIRMA DIGITAL INTELEC <span style="color:var(--muted)">v2.12</span></div>
+      <div class="h-title">FIRMA DIGITAL INTELEC <span style="color:var(--muted)">v2.13</span></div>
       <div class="h-sub">Multi-documento · Detección inteligente</div>
     </div>
     <div id="mode-badge">Standalone</div>
@@ -1170,7 +1170,7 @@ async function signDocument(doc) {
     'sha256:'+docHash, 'paginas:'+plan.map(p=>p.page).join(','),
     'p7sig:'+sigB64.slice(0,60),
   ]);
-  pdfDoc.setCreator('Firma Digital Intelec v2.12');
+  pdfDoc.setCreator('Firma Digital Intelec v2.13');
   pdfDoc.setProducer(cn + ' | Válido hasta: ' + validTo);
 
   try {
@@ -1222,7 +1222,7 @@ function drawSignatureBox(pg, rect, role, cn, org, dateStr, docHash, font, fontB
 
   const sealR = Math.min(16, bh * 0.23);
   pg.drawEllipse({ x: x2-20, y: y1+20, xScale: sealR, yScale: sealR, borderColor: accentC, borderWidth: 1.2, color: bgC });
-  pg.drawText('✓', { x: x2-24, y: y1+15, size: sealR * 0.95, font: fontBold, color: accentC });
+  pg.drawText('OK', { x: x2-26, y: y1+15, size: sealR * 0.7, font: fontBold, color: accentC });
 }
 
 // ═══════════════════════════════════════════════
