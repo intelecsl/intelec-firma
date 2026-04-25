@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -11,7 +10,6 @@
      pdf-lib usa decodeURIComponent al parsear nombres de fuentes
      en PDFs de SAP/ECI que tienen secuencias %XX inválidas
 ═══════════════════════════════════════════════════════════ -->
-
 <script>
 (function(){
   var _d = window.decodeURIComponent;
@@ -22,12 +20,11 @@
 </script>
 
 <!-- PDF.js para ANALIZAR el PDF (detectar campos AcroForm + texto "firma") -->
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-
 <!-- pdf-lib para ESCRIBIR el sello visible -->
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<!-- JSZip para empaquetar varios PDFs firmados (los navegadores bloquean descargas múltiples) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
 <style>
 :root{
@@ -192,7 +189,6 @@ header{background:linear-gradient(135deg,#1a2035,#0f1525);
 .sep{height:1px;background:var(--border);}
 input[type="file"]{display:none;}
 </style>
-
 </head>
 <body>
 
@@ -200,7 +196,7 @@ input[type="file"]{display:none;}
   <div class="hrow">
     <div class="logo">✍</div>
     <span class="appname">FIRMA DIGITAL INTELEC</span>
-    <span class="vbadge">v2.15</span>
+    <span class="vbadge">v2.18</span>
   </div>
   <div class="hsub">Multi-documento · Detección inteligente</div>
 </header>
@@ -208,7 +204,6 @@ input[type="file"]{display:none;}
 <div class="scroll">
 
   <!-- CERTIFICADO -->
-
   <div>
     <div class="slabel">🔐 Certificado digital</div>
     <div class="cert-row">
@@ -230,7 +225,6 @@ input[type="file"]{display:none;}
   <div class="sep"></div>
 
   <!-- DOCUMENTOS -->
-
   <div>
     <div class="slabel">📄 Documentos <span id="docCount" style="color:var(--accent2)"></span></div>
     <button class="btn-mail" id="btnMail" onclick="loadFromOutlook()">⬇ Cargar adjuntos del correo</button>
@@ -246,53 +240,49 @@ input[type="file"]{display:none;}
   </div>
 
   <!-- CONFIG DEL DOCUMENTO ACTIVO -->
-
   <div class="doc-cfg" id="docCfg">
     <div class="cfg-title" id="cfgTitle">—</div>
 
-```
-<div>
-  <div class="detect-hdr"><span class="ico">🎯</span> Campos de firma AcroForm</div>
-  <div class="detect-box" id="boxAcro">
-    <div class="detect-empty">—</div>
-  </div>
-</div>
-
-<div>
-  <div class="detect-hdr"><span class="ico">🔤</span> Texto "firma" detectado</div>
-  <div class="detect-box" id="boxText">
-    <div class="detect-empty">—</div>
-  </div>
-</div>
-
-<div>
-  <div class="detect-hdr"><span class="ico">📐</span> Posición manual (fallback)</div>
-  <div class="pos-grid">
-    <div class="opt-g">
-      <div class="opt-lbl">Posición</div>
-      <select class="opt-sel" id="sigPos">
-        <option value="bottom-right">Inferior derecha</option>
-        <option value="bottom-left">Inferior izquierda</option>
-        <option value="top-right">Superior derecha</option>
-        <option value="top-left">Superior izquierda</option>
-      </select>
+    <div>
+      <div class="detect-hdr"><span class="ico">🎯</span> Campos de firma AcroForm</div>
+      <div class="detect-box" id="boxAcro">
+        <div class="detect-empty">—</div>
+      </div>
     </div>
-    <div class="opt-g">
-      <div class="opt-lbl">Página</div>
-      <select class="opt-sel" id="sigPage">
-        <option value="last">Última</option>
-        <option value="first">Primera</option>
-        <option value="all">Todas</option>
-      </select>
-    </div>
-    <div class="opt-g opt-full">
-      <div class="opt-lbl">Texto de firma (opcional)</div>
-      <input type="text" class="opt-in" id="sigText" placeholder="Firmado digitalmente por Intelec S.L.">
-    </div>
-  </div>
-</div>
-```
 
+    <div>
+      <div class="detect-hdr"><span class="ico">🔤</span> Texto "firma" detectado</div>
+      <div class="detect-box" id="boxText">
+        <div class="detect-empty">—</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="detect-hdr"><span class="ico">📐</span> Posición manual (fallback)</div>
+      <div class="pos-grid">
+        <div class="opt-g">
+          <div class="opt-lbl">Posición</div>
+          <select class="opt-sel" id="sigPos">
+            <option value="bottom-right">Inferior derecha</option>
+            <option value="bottom-left">Inferior izquierda</option>
+            <option value="top-right">Superior derecha</option>
+            <option value="top-left">Superior izquierda</option>
+          </select>
+        </div>
+        <div class="opt-g">
+          <div class="opt-lbl">Página</div>
+          <select class="opt-sel" id="sigPage">
+            <option value="last">Última</option>
+            <option value="first">Primera</option>
+            <option value="all">Todas</option>
+          </select>
+        </div>
+        <div class="opt-g opt-full">
+          <div class="opt-lbl">Texto de firma (opcional)</div>
+          <input type="text" class="opt-in" id="sigText" placeholder="Firmado digitalmente por Intelec S.L.">
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="prog-bar" id="progBar"><div class="prog-fill" id="progFill"></div></div>
@@ -396,7 +386,10 @@ async function addDoc(name, buf) {
   log('info', 'Analizando: ' + name);
 
   try {
-    const pdfJs = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    // IMPORTANTE: pasar una COPIA a PDF.js. El worker de PDF.js transfiere
+    // (no copia) el ArrayBuffer y lo deja detached, dejando inutilizable
+    // el original para pdf-lib en el momento de firmar.
+    const pdfJs = await pdfjsLib.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
     doc.totalPages  = pdfJs.numPages;
     doc.sigFields   = await detectAcroFields(pdfJs);
     doc.textMatches = await detectTextMatches(pdfJs);
@@ -619,7 +612,8 @@ function loadCert(input) {
 // ═══════════════════════════════════════════════════════
 async function signDoc(doc) {
   const { PDFDocument, rgb, StandardFonts } = PDFLib;
-  const pdfDoc = await PDFDocument.load(doc.bytes, { ignoreEncryption: true });
+  // Pasar copia a pdf-lib para preservar doc.bytes intacto (necesario para "Nueva tanda")
+  const pdfDoc = await PDFDocument.load(doc.bytes.slice(0), { ignoreEncryption: true });
   const pages = pdfDoc.getPages();
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const now = new Date();
@@ -698,44 +692,74 @@ async function signDoc(doc) {
       { x:t.x+4, y:t.y+2, size:fsSmall, font, color:rgb(.3,.3,.5) });
   }
 
-  pdfDoc.setProducer(sanitize('Firma Digital Intelec v2.15'));
+  pdfDoc.setProducer(sanitize('Firma Digital Intelec v2.18'));
   pdfDoc.setModificationDate(now);
   return await pdfDoc.save();
-}
-
-async function signAndDownload(doc) {
-  try {
-    doc.status = 'analyzing';
-    renderDocList();
-    log('info', 'Firmando: ' + doc.name);
-    setProgress(true, 25);
-    const signed = await signDoc(doc);
-    setProgress(true, 85);
-    download(signed, doc.name.replace(/\.pdf$/i, '_firmado.pdf'));
-    doc.status = 'done';
-    renderDocList();
-    setProgress(true, 100);
-    log('ok', '✓ ' + doc.name);
-    setTimeout(() => setProgress(false), 900);
-    updateFooter();
-  } catch(e) {
-    doc.status = 'error';
-    doc.error = e.message;
-    renderDocList();
-    log('err', doc.name + ': ' + e.message);
-    setProgress(false);
-    console.error(e);
-  }
 }
 
 async function signSelected() {
   const pending = docs.filter(d => d.status === 'ready' || d.status === 'pending');
   if (!pending.length) { log('info', 'No hay documentos listos'); return; }
   setButtons(false);
+
+  // Firmar TODOS primero, coleccionar bytes en memoria
+  const signed = []; // [{ name, bytes }]
   for (let i = 0; i < pending.length; i++) {
-    setProgress(true, Math.round(i / pending.length * 80));
-    await signAndDownload(pending[i]);
+    const doc = pending[i];
+    setProgress(true, Math.round(i / pending.length * 70));
+    try {
+      doc.status = 'analyzing';
+      renderDocList();
+      log('info', 'Firmando: ' + doc.name);
+      const bytes = await signDoc(doc);
+      signed.push({
+        name: doc.name.replace(/\.pdf$/i, '_firmado.pdf'),
+        bytes
+      });
+      doc.status = 'done';
+      renderDocList();
+      log('ok', '✓ ' + doc.name);
+    } catch(e) {
+      doc.status = 'error';
+      doc.error = e.message;
+      renderDocList();
+      log('err', doc.name + ': ' + e.message);
+      console.error(e);
+    }
   }
+
+  // Descargar todo
+  if (signed.length === 0) {
+    log('err', 'Ningún documento se firmó correctamente');
+    setProgress(false);
+  } else if (signed.length === 1) {
+    setProgress(true, 95);
+    download(signed[0].bytes, signed[0].name);
+    log('ok', 'Descargado: ' + signed[0].name);
+    setProgress(true, 100);
+    setTimeout(() => setProgress(false), 800);
+  } else {
+    // Múltiples → ZIP (los navegadores bloquean descargas múltiples sucesivas)
+    setProgress(true, 80);
+    log('info', `Empaquetando ${signed.length} documentos en ZIP...`);
+    try {
+      const zip = new JSZip();
+      for (const f of signed) zip.file(f.name, f.bytes);
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+      const zipName = `firmados_${ts}.zip`;
+      downloadBlob(zipBlob, zipName);
+      log('ok', `Descargado: ${zipName} (${signed.length} archivos)`);
+      setProgress(true, 100);
+      setTimeout(() => setProgress(false), 800);
+    } catch(e) {
+      log('err', 'Error generando ZIP: ' + e.message);
+      console.error(e);
+      setProgress(false);
+    }
+  }
+
+  updateFooter();
   setButtons(true);
   updateButtons();
 }
@@ -765,6 +789,12 @@ function escHtml(s) {
 function escAttr(s) { return escHtml(s); }
 function download(bytes, name) {
   const url = URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+  const a = Object.assign(document.createElement('a'),{href:url,download:name});
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),5000);
+}
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
   const a = Object.assign(document.createElement('a'),{href:url,download:name});
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url),5000);
@@ -817,6 +847,5 @@ function updateFooter() {
   }
 }
 </script>
-
 </body>
 </html>
