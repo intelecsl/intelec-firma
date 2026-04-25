@@ -1,417 +1,216 @@
 <!DOCTYPE html>
+
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Firma Digital Intelec</title>
 
-<!-- PARCHE CRÍTICO: interceptar decodeURIComponent antes de cargar pdf-lib -->
-<!-- pdf-lib usa decodeURIComponent internamente al parsear nombres de fuentes -->
-<!-- Los PDFs de SAP/ECI contienen secuencias %XX inválidas que lo rompen -->
+<!-- ═══════════════════════════════════════════════════════════
+     PARCHE CRÍTICO: antes de cargar pdf-lib
+     pdf-lib usa decodeURIComponent al parsear nombres de fuentes
+     en PDFs de SAP/ECI que tienen secuencias %XX inválidas
+═══════════════════════════════════════════════════════════ -->
+
 <script>
 (function(){
-  const _orig = window.decodeURIComponent;
-  window.decodeURIComponent = function(s) {
-    try { return _orig(s); } catch(e) { return s; }
-  };
-  const _origURI = window.decodeURI;
-  window.decodeURI = function(s) {
-    try { return _origURI(s); } catch(e) { return s; }
-  };
+  var _d = window.decodeURIComponent;
+  window.decodeURIComponent = function(s){ try{ return _d(s); }catch(e){ return s; } };
+  var _u = window.decodeURI;
+  window.decodeURI = function(s){ try{ return _u(s); }catch(e){ return s; } };
 })();
 </script>
 
+<!-- PDF.js para ANALIZAR el PDF (detectar campos AcroForm + texto "firma") -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<!-- pdf-lib para ESCRIBIR el sello visible -->
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/fontfaceobserver/2.3.0/fontfaceobserver.standalone.js"></script>
 
 <style>
-  :root {
-    --bg: #0f1117;
-    --panel: #181c26;
-    --border: #2a2f3e;
-    --accent: #3b7de9;
-    --accent2: #5a9cf8;
-    --danger: #e05555;
-    --success: #3ec97a;
-    --warn: #e0a035;
-    --text: #e8eaf0;
-    --muted: #7a8099;
-    --radius: 8px;
-    --font: 'Segoe UI', system-ui, sans-serif;
-  }
+:root{
+  --bg:#0f1117; --panel:#181c26; --panel2:#1e2335; --border:#2a2f3e;
+  --accent:#3b7de9; --accent2:#5a9cf8;
+  --danger:#e05555; --success:#3ec97a; --warn:#e0a035;
+  --text:#e8eaf0; --muted:#7a8099;
+  --r:8px; --font:'Segoe UI',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:13px;
+  height:100vh;display:flex;flex-direction:column;overflow:hidden;}
 
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+header{background:linear-gradient(135deg,#1a2035,#0f1525);
+  border-bottom:1px solid var(--border);padding:10px 14px 8px;flex-shrink:0;}
+.hrow{display:flex;align-items:center;gap:8px;margin-bottom:2px;}
+.logo{width:28px;height:28px;background:var(--accent);border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:700;color:#fff;}
+.appname{font-size:14px;font-weight:600;color:#fff;}
+.vbadge{margin-left:auto;font-size:10px;color:var(--muted);
+  background:rgba(255,255,255,.05);padding:2px 7px;border-radius:10px;
+  border:1px solid var(--border);}
+.hsub{font-size:10px;color:var(--muted);padding-left:36px;}
 
-  body {
-    font-family: var(--font);
-    background: var(--bg);
-    color: var(--text);
-    font-size: 13px;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+.scroll{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;}
+.scroll::-webkit-scrollbar{width:4px;}
+.scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
 
-  /* CABECERA */
-  header {
-    background: linear-gradient(135deg, #1a2035 0%, #0f1525 100%);
-    border-bottom: 1px solid var(--border);
-    padding: 10px 14px 8px;
-    flex-shrink: 0;
-  }
-  .header-top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 2px;
-  }
-  .logo-icon {
-    width: 28px; height: 28px;
-    background: var(--accent);
-    border-radius: 6px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 14px; font-weight: 700; color: #fff;
-    flex-shrink: 0;
-  }
-  .app-name {
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-    color: #fff;
-  }
-  .version-badge {
-    margin-left: auto;
-    font-size: 10px;
-    color: var(--muted);
-    background: rgba(255,255,255,0.05);
-    padding: 2px 7px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-  }
-  .header-sub {
-    font-size: 10px;
-    color: var(--muted);
-    padding-left: 36px;
-  }
+.slabel{font-size:10px;font-weight:600;letter-spacing:1px;
+  text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
 
-  /* SCROLL AREA PRINCIPAL */
-  .main-scroll {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .main-scroll::-webkit-scrollbar { width: 4px; }
-  .main-scroll::-webkit-scrollbar-track { background: transparent; }
-  .main-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+/* CERTIFICADO */
+.cert-row{display:flex;gap:6px;}
+.cert-pick{flex:1;background:var(--panel);border:1.5px dashed var(--border);
+  border-radius:var(--r);padding:8px 10px;cursor:pointer;transition:.2s;
+  display:flex;align-items:center;gap:8px;min-width:0;}
+.cert-pick:hover{border-color:var(--accent);background:rgba(59,125,233,.06);}
+.cert-pick.loaded{border-color:var(--success);background:rgba(62,201,122,.05);border-style:solid;}
+.cp-icon{font-size:18px;color:var(--muted);flex-shrink:0;}
+.cert-pick.loaded .cp-icon{color:var(--success);}
+.cp-text{min-width:0;}
+.cp-name{font-size:12px;font-weight:500;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;}
+.cp-hint{font-size:10px;color:var(--muted);}
+.pin-box{width:90px;background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--r);padding:8px 10px;display:flex;flex-direction:column;gap:3px;}
+.pin-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);}
+.pin-in{background:transparent;border:none;outline:none;color:var(--text);
+  font-size:14px;letter-spacing:3px;width:100%;font-family:monospace;}
 
-  /* SECCIÓN CERTIFICADO */
-  .section-label {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin-bottom: 6px;
-  }
+/* DROP ZONE */
+.drop-zone{background:var(--panel);border:1.5px dashed var(--border);
+  border-radius:var(--r);padding:16px 12px;text-align:center;
+  cursor:pointer;transition:.2s;position:relative;}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);
+  background:rgba(59,125,233,.07);}
+.drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;}
+.dz-icon{font-size:26px;margin-bottom:4px;}
+.dz-title{font-size:12px;font-weight:600;margin-bottom:2px;}
+.dz-hint{font-size:10px;color:var(--muted);}
 
-  .cert-row {
-    display: flex;
-    gap: 6px;
-    align-items: stretch;
-  }
-  .cert-pick {
-    flex: 1;
-    background: var(--panel);
-    border: 1px dashed var(--border);
-    border-radius: var(--radius);
-    padding: 8px 10px;
-    cursor: pointer;
-    transition: border-color .2s, background .2s;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .cert-pick:hover { border-color: var(--accent); background: rgba(59,125,233,.06); }
-  .cert-pick.loaded { border-color: var(--success); border-style: solid; }
-  .cert-pick.loaded .cp-icon { color: var(--success); }
-  .cp-icon { font-size: 18px; color: var(--muted); flex-shrink: 0; }
-  .cp-text { min-width: 0; }
-  .cp-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .cp-hint { font-size: 10px; color: var(--muted); }
+/* LISTA DOCUMENTOS */
+.doc-list{display:flex;flex-direction:column;gap:4px;}
+.doc-item{background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--r);padding:7px 9px;display:flex;align-items:center;
+  gap:7px;cursor:pointer;transition:.15s;}
+.doc-item:hover{border-color:var(--accent2);}
+.doc-item.active{border-color:var(--accent);background:rgba(59,125,233,.08);}
+.doc-item.s-analyzing{border-left:3px solid var(--warn);}
+.doc-item.s-pending{border-left:3px solid var(--muted);}
+.doc-item.s-ready{border-left:3px solid var(--accent);}
+.doc-item.s-done{border-left:3px solid var(--success);background:rgba(62,201,122,.04);}
+.doc-item.s-error{border-left:3px solid var(--danger);}
+.di-icon{font-size:18px;flex-shrink:0;}
+.di-info{flex:1;min-width:0;}
+.di-name{font-size:11px;font-weight:500;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;}
+.di-meta{font-size:10px;color:var(--muted);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.di-badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;
+  flex-shrink:0;letter-spacing:.3px;}
+.b-analyzing{background:rgba(224,160,53,.15);color:var(--warn);}
+.b-pending{background:rgba(122,128,153,.15);color:var(--muted);}
+.b-ready{background:rgba(59,125,233,.2);color:var(--accent2);}
+.b-done{background:rgba(62,201,122,.2);color:var(--success);}
+.b-error{background:rgba(224,85,85,.15);color:var(--danger);}
+.di-rm{background:none;border:none;color:var(--muted);cursor:pointer;
+  font-size:12px;padding:2px 4px;border-radius:4px;flex-shrink:0;transition:.15s;}
+.di-rm:hover{color:var(--danger);}
 
-  .pin-box {
-    width: 90px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 8px 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .pin-label { font-size: 9px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
-  .pin-input {
-    background: transparent;
-    border: none;
-    outline: none;
-    color: var(--text);
-    font-size: 14px;
-    letter-spacing: 3px;
-    width: 100%;
-    font-family: monospace;
-  }
+/* CONFIG DOCUMENTO ACTIVO */
+.doc-cfg{background:var(--panel2);border:1px solid var(--border);
+  border-radius:var(--r);padding:10px;display:none;flex-direction:column;gap:8px;}
+.doc-cfg.visible{display:flex;}
+.cfg-title{font-size:11px;font-weight:600;color:var(--accent2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
-  /* DOCUMENTOS */
-  .doc-drop {
-    background: var(--panel);
-    border: 1.5px dashed var(--border);
-    border-radius: var(--radius);
-    padding: 18px 12px;
-    text-align: center;
-    cursor: pointer;
-    transition: all .2s;
-    position: relative;
-  }
-  .doc-drop:hover, .doc-drop.drag-over {
-    border-color: var(--accent);
-    background: rgba(59,125,233,.07);
-  }
-  .doc-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-  .drop-icon { font-size: 28px; margin-bottom: 6px; }
-  .drop-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
-  .drop-hint { font-size: 11px; color: var(--muted); }
+/* DETECCIÓN */
+.detect-box{background:rgba(0,0,0,.2);border:1px solid var(--border);
+  border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:4px;}
+.detect-hdr{display:flex;align-items:center;gap:6px;font-size:10px;
+  font-weight:600;text-transform:uppercase;letter-spacing:.7px;margin-bottom:2px;}
+.detect-hdr .ico{font-size:12px;}
+.detect-empty{font-size:10px;color:var(--muted);font-style:italic;}
+.field-btn{background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:5px;padding:5px 8px;cursor:pointer;font-size:11px;
+  font-family:var(--font);color:var(--text);text-align:left;transition:.15s;
+  display:flex;align-items:center;gap:6px;width:100%;}
+.field-btn:hover{border-color:var(--accent);background:rgba(59,125,233,.08);}
+.field-btn.sel{border-color:var(--success);background:rgba(62,201,122,.1);}
+.field-tag{font-size:9px;font-weight:700;padding:1px 5px;border-radius:5px;flex-shrink:0;}
+.tag-acro{background:rgba(59,125,233,.2);color:var(--accent2);}
+.tag-text{background:rgba(224,160,53,.2);color:var(--warn);}
+.field-info{flex:1;min-width:0;font-size:10px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
-  /* LISTA DOCUMENTOS */
-  .doc-list { display: flex; flex-direction: column; gap: 5px; }
+/* OPCIONES */
+.pos-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;}
+.opt-g{display:flex;flex-direction:column;gap:3px;}
+.opt-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);}
+.opt-sel,.opt-in{background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:5px;color:var(--text);font-size:11px;padding:4px 7px;outline:none;
+  width:100%;font-family:var(--font);}
+.opt-sel:focus,.opt-in:focus{border-color:var(--accent);}
+.opt-sel option{background:#1e2333;}
+.opt-full{grid-column:1/-1;}
 
-  .doc-item {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 8px 10px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    transition: border-color .2s;
-    position: relative;
-  }
-  .doc-item.status-ok { border-left: 3px solid var(--success); }
-  .doc-item.status-err { border-left: 3px solid var(--danger); }
-  .doc-item.status-signing { border-left: 3px solid var(--accent); }
-  .doc-item.status-done { border-left: 3px solid var(--success); background: rgba(62,201,122,.05); }
-  .doc-item.status-loading { border-left: 3px solid var(--warn); }
+.prog-bar{height:3px;background:var(--border);border-radius:2px;
+  overflow:hidden;display:none;}
+.prog-bar.vis{display:block;}
+.prog-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
+  width:0%;transition:width .3s;border-radius:2px;}
 
-  .doc-icon { font-size: 20px; flex-shrink: 0; }
-  .doc-info { flex: 1; min-width: 0; }
-  .doc-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .doc-meta { font-size: 10px; color: var(--muted); margin-top: 1px; }
-  .doc-status-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 7px;
-    border-radius: 10px;
-    flex-shrink: 0;
-    letter-spacing: .3px;
-  }
-  .badge-ok   { background: rgba(62,201,122,.15); color: var(--success); }
-  .badge-err  { background: rgba(224,85,85,.15); color: var(--danger); }
-  .badge-sign { background: rgba(59,125,233,.2); color: var(--accent2); }
-  .badge-done { background: rgba(62,201,122,.2); color: var(--success); }
-  .badge-load { background: rgba(224,160,53,.15); color: var(--warn); }
+.log{background:rgba(0,0,0,.3);border:1px solid var(--border);
+  border-radius:var(--r);padding:7px 9px;
+  font-family:'Consolas','Courier New',monospace;font-size:10px;line-height:1.6;
+  max-height:80px;overflow-y:auto;display:none;}
+.log.vis{display:block;}
+.log .ok{color:var(--success);} .log .err{color:var(--danger);}
+.log .info{color:var(--accent2);} .log .def{color:var(--muted);}
 
-  .doc-remove {
-    background: none;
-    border: none;
-    color: var(--muted);
-    cursor: pointer;
-    font-size: 14px;
-    padding: 2px 4px;
-    border-radius: 4px;
-    flex-shrink: 0;
-    transition: color .15s;
-  }
-  .doc-remove:hover { color: var(--danger); }
+.action-row{display:flex;gap:6px;}
+.btn{flex:1;padding:10px 8px;border:none;border-radius:var(--r);cursor:pointer;
+  font-size:12px;font-weight:600;letter-spacing:.3px;font-family:var(--font);
+  transition:.15s;display:flex;align-items:center;justify-content:center;gap:6px;}
+.btn:disabled{opacity:.35;cursor:not-allowed;}
+.btn-primary{background:linear-gradient(135deg,var(--accent),#2a5cc8);color:#fff;
+  box-shadow:0 2px 8px rgba(59,125,233,.3);}
+.btn-primary:hover:not(:disabled){box-shadow:0 4px 16px rgba(59,125,233,.45);
+  transform:translateY(-1px);}
+.btn-batch{background:linear-gradient(135deg,#3a6e3a,#2a4f2a);color:#a3dba3;
+  border:1px solid #3a6e3a;}
+.btn-batch:hover:not(:disabled){background:linear-gradient(135deg,#4a8a4a,#3a6a3a);}
 
-  /* FIRMA OPCIONES */
-  .sign-opts {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 10px;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-  .opt-group { display: flex; flex-direction: column; gap: 3px; }
-  .opt-label { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
-  .opt-select, .opt-input {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    color: var(--text);
-    font-size: 12px;
-    padding: 5px 8px;
-    outline: none;
-    width: 100%;
-    font-family: var(--font);
-  }
-  .opt-select:focus, .opt-input:focus { border-color: var(--accent); }
-  .opt-select option { background: #1e2333; }
-  .opt-full { grid-column: 1 / -1; }
+.btn-mail{background:rgba(59,125,233,.12);border:1px solid rgba(59,125,233,.25);
+  color:var(--accent2);border-radius:var(--r);padding:6px 10px;
+  font-size:11px;font-weight:600;cursor:pointer;font-family:var(--font);
+  width:100%;text-align:center;transition:.15s;margin-bottom:7px;display:none;}
+.btn-mail:hover{background:rgba(59,125,233,.2);}
 
-  /* BOTONES ACCIÓN */
-  .action-row {
-    display: flex;
-    gap: 6px;
-  }
-  .btn {
-    flex: 1;
-    padding: 10px 8px;
-    border: none;
-    border-radius: var(--radius);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: .3px;
-    font-family: var(--font);
-    transition: all .15s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-  }
-  .btn:disabled { opacity: .4; cursor: not-allowed; }
-
-  .btn-primary {
-    background: linear-gradient(135deg, var(--accent) 0%, #2a5cc8 100%);
-    color: #fff;
-    box-shadow: 0 2px 8px rgba(59,125,233,.3);
-  }
-  .btn-primary:hover:not(:disabled) { box-shadow: 0 4px 16px rgba(59,125,233,.5); transform: translateY(-1px); }
-
-  .btn-batch {
-    background: linear-gradient(135deg, #3a6e3a 0%, #2a4f2a 100%);
-    color: #a3dba3;
-    border: 1px solid #3a6e3a;
-  }
-  .btn-batch:hover:not(:disabled) { background: linear-gradient(135deg, #4a8a4a 0%, #3a6a3a 100%); }
-
-  .btn-secondary {
-    background: var(--panel);
-    color: var(--muted);
-    border: 1px solid var(--border);
-  }
-  .btn-secondary:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
-
-  /* BARRA PROGRESO */
-  .progress-bar {
-    height: 3px;
-    background: var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-    display: none;
-  }
-  .progress-bar.visible { display: block; }
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--accent2));
-    width: 0%;
-    transition: width .3s;
-    border-radius: 2px;
-  }
-
-  /* LOG */
-  .log-area {
-    background: rgba(0,0,0,.3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 8px 10px;
-    font-family: 'Consolas', 'Courier New', monospace;
-    font-size: 10px;
-    line-height: 1.6;
-    max-height: 80px;
-    overflow-y: auto;
-    display: none;
-  }
-  .log-area.visible { display: block; }
-  .log-line { color: var(--muted); }
-  .log-line.ok { color: var(--success); }
-  .log-line.err { color: var(--danger); }
-  .log-line.info { color: var(--accent2); }
-
-  /* SEPARADOR */
-  .sep {
-    height: 1px;
-    background: var(--border);
-    border-radius: 1px;
-  }
-
-  /* SPINNER */
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .spinner { display: inline-block; animation: spin .8s linear infinite; }
-
-  /* FIRMA DESDE OUTLOOK */
-  .outlook-banner {
-    background: rgba(59,125,233,.08);
-    border: 1px solid rgba(59,125,233,.2);
-    border-radius: var(--radius);
-    padding: 8px 10px;
-    font-size: 11px;
-    color: var(--accent2);
-    display: none;
-    align-items: center;
-    gap: 8px;
-  }
-  .outlook-banner.visible { display: flex; }
-
-  /* CARGAR DESDE CORREO */
-  .btn-load-mail {
-    background: rgba(59,125,233,.12);
-    border: 1px solid rgba(59,125,233,.25);
-    color: var(--accent2);
-    border-radius: var(--radius);
-    padding: 7px 10px;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    font-family: var(--font);
-    width: 100%;
-    text-align: center;
-    transition: all .15s;
-  }
-  .btn-load-mail:hover { background: rgba(59,125,233,.2); }
-  .btn-load-mail:disabled { opacity: .4; cursor: not-allowed; }
-
-  input[type="file"] { display: none; }
+.sep{height:1px;background:var(--border);}
+input[type="file"]{display:none;}
 </style>
+
 </head>
 <body>
 
 <header>
-  <div class="header-top">
-    <div class="logo-icon">✍</div>
-    <span class="app-name">FIRMA DIGITAL INTELEC</span>
-    <span class="version-badge">v2.15</span>
+  <div class="hrow">
+    <div class="logo">✍</div>
+    <span class="appname">FIRMA DIGITAL INTELEC</span>
+    <span class="vbadge">v2.15</span>
   </div>
-  <div class="header-sub">Multi-documento · Detección inteligente</div>
+  <div class="hsub">Multi-documento · Detección inteligente</div>
 </header>
 
-<div class="main-scroll">
+<div class="scroll">
 
-  <!-- BANNER OUTLOOK -->
-  <div class="outlook-banner" id="outlookBanner">
-    <span>📨</span>
-    <span id="outlookBannerTxt">Adjuntos detectados en el correo</span>
-  </div>
+  <!-- CERTIFICADO -->
 
-  <!-- SECCIÓN: CERTIFICADO -->
   <div>
-    <div class="section-label">🔐 Certificado digital</div>
+    <div class="slabel">🔐 Certificado digital</div>
     <div class="cert-row">
       <div class="cert-pick" id="certPickBtn" onclick="document.getElementById('certFile').click()">
         <span class="cp-icon" id="certIcon">🪪</span>
@@ -420,398 +219,507 @@
           <div class="cp-hint">.p12 / .pfx</div>
         </div>
       </div>
-      <input type="file" id="certFile" accept=".p12,.pfx" onchange="loadCert(this)">
       <div class="pin-box">
-        <div class="pin-label">PIN / Contraseña</div>
-        <input type="password" class="pin-input" id="certPin" placeholder="••••••" autocomplete="off">
+        <div class="pin-lbl">PIN</div>
+        <input type="password" class="pin-in" id="certPin" placeholder="••••••" autocomplete="off">
       </div>
     </div>
+    <input type="file" id="certFile" accept=".p12,.pfx" onchange="loadCert(this)">
   </div>
 
   <div class="sep"></div>
 
-  <!-- SECCIÓN: DOCUMENTOS -->
+  <!-- DOCUMENTOS -->
+
   <div>
-    <div class="section-label">📄 Documentos <span id="docCount" style="color:var(--accent2)"></span></div>
-
-    <!-- Botón cargar desde correo -->
-    <button class="btn-load-mail" id="btnLoadMail" onclick="loadFromOutlook()" style="margin-bottom:8px;display:none">
-      ⬇ Cargar adjuntos del correo
-    </button>
-
-    <!-- Drop area -->
-    <div class="doc-drop" id="docDrop"
+    <div class="slabel">📄 Documentos <span id="docCount" style="color:var(--accent2)"></span></div>
+    <button class="btn-mail" id="btnMail" onclick="loadFromOutlook()">⬇ Cargar adjuntos del correo</button>
+    <div class="drop-zone" id="dropZone"
          ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)"
          onclick="document.getElementById('pdfFiles').click()">
       <input type="file" id="pdfFiles" accept=".pdf" multiple onchange="addFiles(this.files)">
-      <div class="drop-icon">📂</div>
-      <div class="drop-title">Arrastra o clic · Multi-selección</div>
-      <div class="drop-hint">PDF · Desde equipo o adjunto</div>
+      <div class="dz-icon">📂</div>
+      <div class="dz-title">Arrastra o clic · Multi-selección</div>
+      <div class="dz-hint">PDF · Desde equipo o adjunto</div>
     </div>
-
-    <!-- Lista documentos -->
-    <div id="docList" class="doc-list" style="margin-top:8px"></div>
+    <div id="docList" class="doc-list" style="margin-top:7px"></div>
   </div>
 
-  <div class="sep"></div>
+  <!-- CONFIG DEL DOCUMENTO ACTIVO -->
 
-  <!-- OPCIONES DE FIRMA -->
-  <div>
-    <div class="section-label">⚙ Opciones de firma</div>
-    <div class="sign-opts">
-      <div class="opt-group">
-        <div class="opt-label">Posición</div>
-        <select class="opt-select" id="sigPos">
-          <option value="bottom-right">Inferior derecha</option>
-          <option value="bottom-left">Inferior izquierda</option>
-          <option value="top-right">Superior derecha</option>
-          <option value="top-left">Superior izquierda</option>
-        </select>
-      </div>
-      <div class="opt-group">
-        <div class="opt-label">Página</div>
-        <select class="opt-select" id="sigPage">
-          <option value="last">Última</option>
-          <option value="first">Primera</option>
-          <option value="all">Todas</option>
-        </select>
-      </div>
-      <div class="opt-group opt-full">
-        <div class="opt-label">Texto de firma (opcional)</div>
-        <input type="text" class="opt-input" id="sigText" placeholder="Firmado digitalmente por Intelec S.L.">
-      </div>
+  <div class="doc-cfg" id="docCfg">
+    <div class="cfg-title" id="cfgTitle">—</div>
+
+```
+<div>
+  <div class="detect-hdr"><span class="ico">🎯</span> Campos de firma AcroForm</div>
+  <div class="detect-box" id="boxAcro">
+    <div class="detect-empty">—</div>
+  </div>
+</div>
+
+<div>
+  <div class="detect-hdr"><span class="ico">🔤</span> Texto "firma" detectado</div>
+  <div class="detect-box" id="boxText">
+    <div class="detect-empty">—</div>
+  </div>
+</div>
+
+<div>
+  <div class="detect-hdr"><span class="ico">📐</span> Posición manual (fallback)</div>
+  <div class="pos-grid">
+    <div class="opt-g">
+      <div class="opt-lbl">Posición</div>
+      <select class="opt-sel" id="sigPos">
+        <option value="bottom-right">Inferior derecha</option>
+        <option value="bottom-left">Inferior izquierda</option>
+        <option value="top-right">Superior derecha</option>
+        <option value="top-left">Superior izquierda</option>
+      </select>
+    </div>
+    <div class="opt-g">
+      <div class="opt-lbl">Página</div>
+      <select class="opt-sel" id="sigPage">
+        <option value="last">Última</option>
+        <option value="first">Primera</option>
+        <option value="all">Todas</option>
+      </select>
+    </div>
+    <div class="opt-g opt-full">
+      <div class="opt-lbl">Texto de firma (opcional)</div>
+      <input type="text" class="opt-in" id="sigText" placeholder="Firmado digitalmente por Intelec S.L.">
     </div>
   </div>
+</div>
+```
 
-  <!-- BARRA PROGRESO -->
-  <div class="progress-bar" id="progressBar">
-    <div class="progress-fill" id="progressFill"></div>
   </div>
 
-  <!-- LOG -->
-  <div class="log-area" id="logArea"></div>
+  <div class="prog-bar" id="progBar"><div class="prog-fill" id="progFill"></div></div>
+  <div class="log" id="logArea"></div>
 
-  <!-- BOTONES -->
   <div class="action-row">
-    <button class="btn btn-primary" id="btnSign" onclick="signSelected()" disabled>
-      ✍ FIRMAR
-    </button>
-    <button class="btn btn-batch" id="btnBatch" onclick="signAll()" disabled>
-      ⚡ Firmar nueva tanda
-    </button>
+    <button class="btn btn-primary" id="btnSign" onclick="signSelected()" disabled>✍ FIRMAR</button>
+    <button class="btn btn-batch" id="btnBatch" onclick="signAll()" disabled>⚡ Nueva tanda</button>
   </div>
 
-  <!-- Pie cargados -->
   <div id="signedFoot" style="font-size:10px;color:var(--muted);text-align:center;display:none"></div>
 
-</div><!-- /main-scroll -->
-
-<!-- INPUT OCULTO CERTIFICADO -->
-<input type="file" id="certFile" accept=".p12,.pfx" onchange="loadCert(this)" style="display:none">
+</div>
 
 <script>
-// ═══════════════════════════════════════════════
-// ESTADO GLOBAL
-// ═══════════════════════════════════════════════
-const docs = []; // { id, name, bytes (ArrayBuffer), size, status, signed, error }
-let certP12 = null;   // ArrayBuffer del .p12
-let certName_g = '';
-let outlookAPI = false;
+// PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-// ═══════════════════════════════════════════════
-// INICIALIZACIÓN OFFICE.JS (si está disponible)
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+// ESTADO
+// ═══════════════════════════════════════════════════════
+const docs = [];
+let currentDocId = null;
+let certBytes = null;
+let certNameG = '';
+let outlookReady = false;
+const fieldSel = {}; // { docId: { type:'acro'|'text'|'manual', idx } }
+
+// ═══════════════════════════════════════════════════════
+// OFFICE.JS
+// ═══════════════════════════════════════════════════════
 function initOffice() {
   if (typeof Office === 'undefined') return;
-  Office.onReady(function(info) {
+  Office.onReady(info => {
     if (info.host === Office.HostType.Outlook) {
-      outlookAPI = true;
+      outlookReady = true;
       checkOutlookAttachments();
     }
   });
 }
-
-// Intentar cargar Office.js si no está presente
 if (typeof Office === 'undefined') {
   const s = document.createElement('script');
   s.src = 'https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js';
   s.onload = initOffice;
   document.head.appendChild(s);
-} else {
-  initOffice();
-}
+} else { initOffice(); }
 
-// ═══════════════════════════════════════════════
-// OUTLOOK: detectar adjuntos
-// ═══════════════════════════════════════════════
 function checkOutlookAttachments() {
-  if (!outlookAPI) return;
   try {
     const item = Office.context.mailbox.item;
-    if (!item) return;
-    const atts = item.attachments || [];
-    const pdfs = atts.filter(a => a.name && a.name.toLowerCase().endsWith('.pdf'));
+    const pdfs = (item?.attachments || []).filter(a => a.name?.toLowerCase().endsWith('.pdf'));
     if (pdfs.length > 0) {
-      document.getElementById('outlookBanner').classList.add('visible');
-      document.getElementById('outlookBannerTxt').textContent =
-        `${pdfs.length} adjunto(s) PDF detectado(s) en el correo`;
-      const btn = document.getElementById('btnLoadMail');
+      const btn = document.getElementById('btnMail');
       btn.style.display = 'block';
-      btn.textContent = `⬇ Cargar todos (${pdfs.length})`;
+      btn.textContent = `⬇ Cargar adjuntos del correo (${pdfs.length})`;
     }
-  } catch(e) { console.warn('checkOutlookAttachments:', e); }
+  } catch(e) {}
 }
 
 function loadFromOutlook() {
-  if (!outlookAPI) { log('err', 'Office.js no disponible'); return; }
+  if (!outlookReady) { log('err','Office.js no disponible'); return; }
   const item = Office.context.mailbox.item;
-  if (!item) { log('err', 'No hay elemento de correo activo'); return; }
-  const pdfs = (item.attachments || []).filter(a => a.name.toLowerCase().endsWith('.pdf'));
-  if (pdfs.length === 0) { log('info', 'No hay adjuntos PDF en este correo'); return; }
-
-  document.getElementById('btnLoadMail').disabled = true;
-  let loaded = 0;
-
+  const pdfs = (item?.attachments || []).filter(a => a.name?.toLowerCase().endsWith('.pdf'));
+  document.getElementById('btnMail').disabled = true;
   pdfs.forEach(att => {
-    setDocStatus_byName(att.name, 'loading', 'Cargando…');
-    item.getAttachmentContentAsync(att.id, {}, function(result) {
-      if (result.status !== Office.AsyncResultStatus.Succeeded) {
-        addDocError(att.name, 'Error al obtener adjunto: ' + result.error.message);
-        return;
+    item.getAttachmentContentAsync(att.id, {}, r => {
+      if (r.status !== Office.AsyncResultStatus.Succeeded) {
+        log('err', att.name + ': ' + r.error.message); return;
       }
-      const content = result.value;
-      let bytes;
-      if (content.format === Office.MailboxEnums.AttachmentContentFormat.Base64) {
-        bytes = base64ToBuffer(content.content);
-      } else {
-        log('err', att.name + ': formato no soportado');
-        return;
-      }
-      addDocEntry(att.name, bytes);
-      loaded++;
-      if (loaded === pdfs.length) {
-        log('ok', `${loaded} adjunto(s) cargados correctamente`);
-      }
+      addDoc(att.name, base64ToBuffer(r.value.content));
     });
   });
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 // DRAG & DROP
-// ═══════════════════════════════════════════════
-function onDragOver(e) {
-  e.preventDefault();
-  document.getElementById('docDrop').classList.add('drag-over');
-}
-function onDragLeave(e) {
-  document.getElementById('docDrop').classList.remove('drag-over');
-}
-function onDrop(e) {
-  e.preventDefault();
-  document.getElementById('docDrop').classList.remove('drag-over');
-  addFiles(e.dataTransfer.files);
-}
-
-// ═══════════════════════════════════════════════
-// AÑADIR ARCHIVOS
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+function onDragOver(e) { e.preventDefault(); document.getElementById('dropZone').classList.add('drag-over'); }
+function onDragLeave() { document.getElementById('dropZone').classList.remove('drag-over'); }
+function onDrop(e) { e.preventDefault(); onDragLeave(); addFiles(e.dataTransfer.files); }
 function addFiles(files) {
-  Array.from(files).forEach(file => {
-    if (!file.name.toLowerCase().endsWith('.pdf')) return;
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      addDocEntry(file.name, e.target.result);
-    };
-    reader.readAsArrayBuffer(file);
+  Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf')).forEach(f => {
+    const r = new FileReader();
+    r.onload = e => addDoc(f.name, e.target.result);
+    r.readAsArrayBuffer(f);
   });
-  // Reset input para permitir re-selección del mismo archivo
   document.getElementById('pdfFiles').value = '';
 }
 
-function addDocEntry(name, bytes) {
-  // Evitar duplicados por nombre
-  if (docs.find(d => d.name === name)) {
-    log('info', name + ': ya en la lista');
-    return;
-  }
-  const id = 'doc_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-  docs.push({ id, name, bytes, size: bytes.byteLength, status: 'ok', signed: false, error: null });
+// ═══════════════════════════════════════════════════════
+// AÑADIR DOCUMENTO + ANÁLISIS
+// ═══════════════════════════════════════════════════════
+async function addDoc(name, buf) {
+  if (docs.some(d => d.name === name)) { log('info', name + ': ya en la lista'); return; }
+  const id = 'doc_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+  const doc = { id, name, bytes: buf, size: buf.byteLength,
+    status: 'analyzing', sigFields: [], textMatches: [], totalPages: 0, error: null };
+  docs.push(doc);
   renderDocList();
-  updateButtons();
-  log('ok', name + ' añadido (' + fmtSize(bytes.byteLength) + ')');
+  log('info', 'Analizando: ' + name);
+
+  try {
+    const pdfJs = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    doc.totalPages  = pdfJs.numPages;
+    doc.sigFields   = await detectAcroFields(pdfJs);
+    doc.textMatches = await detectTextMatches(pdfJs);
+
+    // Auto-seleccionar el campo más relevante
+    if (doc.sigFields.length > 0) {
+      fieldSel[id] = { type: 'acro', idx: 0 };
+      doc.status = 'ready';
+    } else if (doc.textMatches.length > 0) {
+      fieldSel[id] = { type: 'text', idx: 0 };
+      doc.status = 'ready';
+    } else {
+      fieldSel[id] = { type: 'manual' };
+      doc.status = 'pending';
+    }
+
+    renderDocList();
+    if (!currentDocId) selectDoc(id);
+    else if (currentDocId === id) renderCfg(doc);
+
+    log('ok', `${name} → ${doc.sigFields.length} AcroForm · ${doc.textMatches.length} texto`);
+  } catch(err) {
+    doc.status = 'error';
+    doc.error = err.message;
+    renderDocList();
+    log('err', name + ': ' + err.message);
+    console.error(err);
+  }
 }
 
-function addDocError(name, msg) {
-  const existing = docs.find(d => d.name === name);
-  if (existing) {
-    existing.status = 'err';
-    existing.error = msg;
-    renderDocList();
-  } else {
-    const id = 'doc_' + Date.now();
-    docs.push({ id, name, bytes: null, size: 0, status: 'err', signed: false, error: msg });
-    renderDocList();
+// ═══════════════════════════════════════════════════════
+// DETECCIÓN: Campos AcroForm Sig
+// ═══════════════════════════════════════════════════════
+async function detectAcroFields(pdfJs) {
+  const fields = [];
+  for (let p = 1; p <= pdfJs.numPages; p++) {
+    try {
+      const page = await pdfJs.getPage(p);
+      const anns = await page.getAnnotations();
+      for (const ann of anns) {
+        if (ann.subtype === 'Widget' && ann.fieldType === 'Sig') {
+          fields.push({
+            page: p,
+            rect: ann.rect.slice(),
+            name: ann.fieldName || ('Firma p.' + p),
+          });
+        }
+      }
+    } catch(e) { console.warn('detectAcroFields p.' + p, e); }
   }
+  return fields;
+}
+
+// ═══════════════════════════════════════════════════════
+// DETECCIÓN: Texto "firma" / "signature"
+// ═══════════════════════════════════════════════════════
+const SIG_KEYWORDS = ['firma', 'firmado', 'firmante', 'firmar', 'signature', 'signed', 'sello'];
+
+async function detectTextMatches(pdfJs) {
+  const matches = [];
+  for (let p = 1; p <= pdfJs.numPages; p++) {
+    if (matches.length >= 8) break;
+    try {
+      const page = await pdfJs.getPage(p);
+      const content = await page.getTextContent();
+      const viewport = page.getViewport({ scale: 1 });
+
+      for (const item of content.items) {
+        const txt = (item.str || '').toLowerCase().trim();
+        if (!txt || txt.length > 60) continue;
+        const hit = SIG_KEYWORDS.find(kw => txt.includes(kw));
+        if (hit) {
+          const tr = item.transform;
+          if (!tr || tr.length < 6) continue;
+          const x = tr[4];
+          const y = tr[5];
+          // PDF usa origen abajo-izda; transform.f ya está en ese sistema
+          const pdfY = y;
+          const w = item.width || 80;
+          const h = item.height || 12;
+          matches.push({
+            page: p,
+            keyword: hit,
+            text: item.str.trim(),
+            // rect en coords PDF (origen abajo-izda)
+            rect: [x, pdfY - 4, x + Math.max(w, 150), pdfY + h + 6],
+          });
+          if (matches.length >= 8) break;
+        }
+      }
+    } catch(e) { console.warn('detectTextMatches p.' + p, e); }
+  }
+  return matches;
+}
+
+// ═══════════════════════════════════════════════════════
+// SELECCIÓN DOCUMENTO
+// ═══════════════════════════════════════════════════════
+function selectDoc(id) {
+  currentDocId = id;
+  renderDocList();
+  const doc = docs.find(d => d.id === id);
+  if (doc) renderCfg(doc);
 }
 
 function removeDoc(id) {
-  const idx = docs.findIndex(d => d.id === id);
-  if (idx >= 0) docs.splice(idx, 1);
+  const i = docs.findIndex(d => d.id === id);
+  if (i >= 0) docs.splice(i, 1);
+  delete fieldSel[id];
+  if (currentDocId === id) {
+    currentDocId = docs[0]?.id || null;
+    if (currentDocId) renderCfg(docs[0]);
+    else document.getElementById('docCfg').classList.remove('visible');
+  }
   renderDocList();
   updateButtons();
 }
 
-function setDocStatus_byName(name, status, errMsg) {
-  const doc = docs.find(d => d.name === name);
-  if (doc) {
-    doc.status = status;
-    if (errMsg) doc.error = errMsg;
-    renderDocList();
-  }
-}
-
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 // RENDER LISTA
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 function renderDocList() {
-  const list = document.getElementById('docList');
   document.getElementById('docCount').textContent = docs.length > 0 ? `(${docs.length})` : '';
+  const list = document.getElementById('docList');
+  if (!docs.length) { list.innerHTML = ''; updateButtons(); return; }
 
-  if (docs.length === 0) { list.innerHTML = ''; return; }
+  const ICO = { analyzing:'⏳', pending:'📄', ready:'✅', done:'✔️', error:'❌' };
+  const LBL = { analyzing:'…', pending:'Pend.', ready:'Listo', done:'Firmado', error:'Err' };
+  const BCL = { analyzing:'b-analyzing', pending:'b-pending', ready:'b-ready', done:'b-done', error:'b-error' };
 
   list.innerHTML = docs.map(doc => {
-    const badgeClass = {
-      ok: 'badge-ok', err: 'badge-err', signing: 'badge-sign', done: 'badge-done', loading: 'badge-load'
-    }[doc.status] || 'badge-ok';
-    const badgeText = {
-      ok: 'OK', err: 'Err', signing: '…', done: '✓', loading: '…'
-    }[doc.status] || 'OK';
+    const active = doc.id === currentDocId ? 'active' : '';
+    const acroN = doc.sigFields?.length ?? 0;
+    const textN = doc.textMatches?.length ?? 0;
+    let meta;
+    if (doc.status === 'error') meta = doc.error || 'Error';
+    else if (doc.status === 'analyzing') meta = 'Analizando…';
+    else meta = `${fmtSize(doc.size)} · ${acroN} AcroForm · ${textN} texto`;
 
-    const statusClass = 'status-' + doc.status;
-    const icon = doc.status === 'done' ? '✅' : doc.status === 'err' ? '❌' : doc.status === 'loading' ? '⏳' : '📄';
-    const meta = doc.status === 'err'
-      ? `<span style="color:var(--danger);font-size:9px">${doc.error || 'Error desconocido'}</span>`
-      : fmtSize(doc.size);
+    return `<div class="doc-item s-${doc.status} ${active}" onclick="selectDoc('${doc.id}')">
+      <span class="di-icon">${ICO[doc.status]||'📄'}</span>
+      <div class="di-info">
+        <div class="di-name" title="${escAttr(doc.name)}">${escHtml(doc.name)}</div>
+        <div class="di-meta">${escHtml(meta)}</div>
+      </div>
+      <span class="di-badge ${BCL[doc.status]||'b-pending'}">${LBL[doc.status]||'—'}</span>
+      <button class="di-rm" onclick="event.stopPropagation();removeDoc('${doc.id}')" title="Eliminar">✕</button>
+    </div>`;
+  }).join('');
+  updateButtons();
+}
 
-    return `
-      <div class="doc-item ${statusClass}" id="${doc.id}">
-        <span class="doc-icon">${icon}</span>
-        <div class="doc-info">
-          <div class="doc-name" title="${doc.name}">${doc.name}</div>
-          <div class="doc-meta">${meta}</div>
-        </div>
-        <span class="doc-status-badge ${badgeClass}">${badgeText}</span>
-        <button class="doc-remove" onclick="removeDoc('${doc.id}')" title="Eliminar">✕</button>
-      </div>`;
+// ═══════════════════════════════════════════════════════
+// RENDER CONFIG
+// ═══════════════════════════════════════════════════════
+function renderCfg(doc) {
+  const cfg = document.getElementById('docCfg');
+  cfg.classList.add('visible');
+  document.getElementById('cfgTitle').textContent = doc.name;
+
+  renderFieldBox('boxAcro', doc.sigFields, 'acro', doc.id,
+    f => `${escHtml(f.name)} · p.${f.page}`);
+  renderFieldBox('boxText', doc.textMatches, 'text', doc.id,
+    f => `"${escHtml(f.text)}" · p.${f.page}`);
+
+  updateButtons();
+}
+
+function renderFieldBox(boxId, items, type, docId, labelFn) {
+  const box = document.getElementById(boxId);
+  const sel = fieldSel[docId];
+  if (!items || items.length === 0) {
+    box.innerHTML = '<div class="detect-empty">No detectado</div>';
+    return;
+  }
+  const tagClass = type === 'acro' ? 'tag-acro' : 'tag-text';
+  const tagLabel = type === 'acro' ? 'AcroForm' : 'Texto';
+  box.innerHTML = items.map((f, i) => {
+    const isSel = sel && sel.type === type && sel.idx === i;
+    return `<button class="field-btn ${isSel?'sel':''}"
+      onclick="selectField('${docId}','${type}',${i})">
+      <span class="field-tag ${tagClass}">${tagLabel}</span>
+      <span class="field-info">${labelFn(f)}</span>
+      ${isSel ? '<span style="margin-left:auto;font-size:11px;color:var(--success)">✓</span>' : ''}
+    </button>`;
   }).join('');
 }
 
-// ═══════════════════════════════════════════════
+function selectField(docId, type, idx) {
+  fieldSel[docId] = { type, idx };
+  const doc = docs.find(d => d.id === docId);
+  if (doc) {
+    if (doc.status === 'pending') doc.status = 'ready';
+    renderDocList();
+    renderCfg(doc);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
 // CERTIFICADO
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 function loadCert(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    certP12 = e.target.result;
-    certName_g = file.name;
-    document.getElementById('certName').textContent = file.name;
+  const f = input.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = e => {
+    certBytes = e.target.result;
+    certNameG = f.name;
+    document.getElementById('certName').textContent = f.name;
     document.getElementById('certIcon').textContent = '✅';
     document.getElementById('certPickBtn').classList.add('loaded');
-    log('ok', 'Certificado cargado: ' + file.name);
+    log('ok', 'Certificado: ' + f.name);
     updateButtons();
   };
-  reader.readAsArrayBuffer(file);
+  r.readAsArrayBuffer(f);
 }
 
-// ═══════════════════════════════════════════════
-// FIRMA PDF
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+// FIRMA - dibuja el sello visible con pdf-lib
+// ═══════════════════════════════════════════════════════
 async function signDoc(doc) {
-  if (!doc.bytes) throw new Error('No hay bytes del documento');
-  doc.status = 'signing';
-  renderDocList();
-
-  const { PDFDocument, rgb, StandardFonts, degrees } = PDFLib;
-
-  // Cargar PDF - el parche de decodeURIComponent evita "URI malformed"
+  const { PDFDocument, rgb, StandardFonts } = PDFLib;
   const pdfDoc = await PDFDocument.load(doc.bytes, { ignoreEncryption: true });
-
   const pages = pdfDoc.getPages();
-  const sigPageOpt = document.getElementById('sigPage').value;
-  const sigPosOpt  = document.getElementById('sigPos').value;
-  let sigText = document.getElementById('sigText').value.trim();
-  if (!sigText) sigText = 'Firmado digitalmente · Intelec S.L.';
-
-  // Seleccionar páginas
-  let targetPages = [];
-  if (sigPageOpt === 'first') targetPages = [pages[0]];
-  else if (sigPageOpt === 'last') targetPages = [pages[pages.length - 1]];
-  else targetPages = pages;
-
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const fontSize = 7;
-  const margin = 18;
-  const boxW = 180, boxH = 28;
-
   const now = new Date();
-  const dateStr = now.toLocaleDateString('es-ES') + ' ' + now.toLocaleTimeString('es-ES');
-  const certInfo = certName_g ? certName_g.replace(/\.[^.]+$/, '') : 'Intelec S.L.';
 
-  for (const page of targetPages) {
-    const { width, height } = page.getSize();
-    let x, y;
-    if (sigPosOpt === 'bottom-right') { x = width - boxW - margin; y = margin; }
-    else if (sigPosOpt === 'bottom-left') { x = margin; y = margin; }
-    else if (sigPosOpt === 'top-right') { x = width - boxW - margin; y = height - boxH - margin; }
-    else { x = margin; y = height - boxH - margin; }
+  const sigText = document.getElementById('sigText').value.trim()
+    || 'Firmado digitalmente · Intelec S.L.';
+  const sigPos  = document.getElementById('sigPos').value;
+  const sigPage = document.getElementById('sigPage').value;
+  const certInfo = certNameG ? certNameG.replace(/\.[^.]+$/, '') : 'Intelec S.L.';
+  const dateStr = sanitize(now.toLocaleDateString('es-ES') + ' ' + now.toLocaleTimeString('es-ES'));
 
-    // Fondo semi-transparente del recuadro
-    page.drawRectangle({ x, y, width: boxW, height: boxH,
-      color: rgb(0.95, 0.97, 1.0), opacity: 0.9,
-      borderColor: rgb(0.24, 0.49, 0.91), borderWidth: 0.8, borderOpacity: 1 });
+  const sel = fieldSel[doc.id] || { type: 'manual' };
+  const W = 185, H = 32, MARGIN = 18;
+  const fs = 7, fsSmall = 6;
 
-    // Línea decorativa superior
-    page.drawRectangle({ x, y: y + boxH - 4, width: boxW, height: 4,
-      color: rgb(0.24, 0.49, 0.91), opacity: 1 });
+  // Determinar dónde colocar el sello
+  let targets = []; // [{ pageIdx, x, y, w, h }]
 
-    // Texto firma
-    const line1 = sanitize('✍ ' + sigText);
-    const line2 = sanitize('Certificado: ' + certInfo);
-    const line3 = sanitize('Fecha: ' + dateStr);
+  if (sel.type === 'acro' && doc.sigFields[sel.idx]) {
+    const f = doc.sigFields[sel.idx];
+    const pageIdx = f.page - 1;
+    const [x1, y1, x2, y2] = f.rect;
+    const w = Math.max(Math.abs(x2 - x1), 100);
+    const h = Math.max(Math.abs(y2 - y1), 28);
+    targets = [{ pageIdx, x: Math.min(x1, x2), y: Math.min(y1, y2), w, h }];
+    log('info', `Posición: campo AcroForm "${f.name}" p.${f.page}`);
 
-    page.drawText(line1, { x: x + 5, y: y + 17, size: fontSize, font, color: rgb(0.1, 0.2, 0.5) });
-    page.drawText(line2, { x: x + 5, y: y + 9,  size: fontSize - 1, font, color: rgb(0.3, 0.3, 0.5) });
-    page.drawText(line3, { x: x + 5, y: y + 2,  size: fontSize - 1, font, color: rgb(0.3, 0.3, 0.5) });
+  } else if (sel.type === 'text' && doc.textMatches[sel.idx]) {
+    const m = doc.textMatches[sel.idx];
+    const pageIdx = m.page - 1;
+    const [x1, y1, x2, y2] = m.rect;
+    // Colocar el sello justo debajo del texto detectado
+    const w = W;
+    const h = H;
+    const x = Math.min(x1, x2);
+    const y = Math.max(0, Math.min(y1, y2) - h - 4);
+    targets = [{ pageIdx, x, y, w, h }];
+    log('info', `Posición: texto "${m.text}" p.${m.page}`);
+
+  } else {
+    let pageIdxs = [];
+    if (sigPage === 'first') pageIdxs = [0];
+    else if (sigPage === 'last') pageIdxs = [pages.length - 1];
+    else pageIdxs = pages.map((_, i) => i);
+
+    pageIdxs.forEach(pageIdx => {
+      const { width, height } = pages[pageIdx].getSize();
+      let x, y;
+      if      (sigPos === 'bottom-right') { x = width - W - MARGIN; y = MARGIN; }
+      else if (sigPos === 'bottom-left')  { x = MARGIN; y = MARGIN; }
+      else if (sigPos === 'top-right')    { x = width - W - MARGIN; y = height - H - MARGIN; }
+      else                                { x = MARGIN; y = height - H - MARGIN; }
+      targets.push({ pageIdx, x, y, w: W, h: H });
+    });
+    log('info', `Posición: manual ${sigPos} (${pageIdxs.length} pág.)`);
   }
 
-  // Metadata
-  pdfDoc.setProducer(sanitize('Firma Digital Intelec v2.15'));
-  pdfDoc.setCreator(sanitize('Intelec S.L.'));
-  pdfDoc.setModificationDate(now);
+  // Dibujar sello en cada target
+  for (const t of targets) {
+    if (t.pageIdx < 0 || t.pageIdx >= pages.length) continue;
+    const pg = pages[t.pageIdx];
 
-  const signedBytes = await pdfDoc.save();
-  return signedBytes;
+    // Fondo
+    pg.drawRectangle({ x:t.x, y:t.y, width:t.w, height:t.h,
+      color:rgb(.95,.97,1), opacity:.92,
+      borderColor:rgb(.24,.49,.91), borderWidth:.8 });
+    // Banda superior
+    pg.drawRectangle({ x:t.x, y:t.y+t.h-4, width:t.w, height:4,
+      color:rgb(.24,.49,.91) });
+    // Texto
+    pg.drawText(sanitize('FIRMADO ' + sigText),
+      { x:t.x+4, y:t.y+t.h-14, size:fs, font, color:rgb(.1,.2,.5) });
+    pg.drawText(sanitize('Cert: ' + certInfo),
+      { x:t.x+4, y:t.y+8, size:fsSmall, font, color:rgb(.3,.3,.5) });
+    pg.drawText(sanitize('Fecha: ' + dateStr),
+      { x:t.x+4, y:t.y+2, size:fsSmall, font, color:rgb(.3,.3,.5) });
+  }
+
+  pdfDoc.setProducer(sanitize('Firma Digital Intelec v2.15'));
+  pdfDoc.setModificationDate(now);
+  return await pdfDoc.save();
 }
 
-// Firma un documento y descarga
 async function signAndDownload(doc) {
   try {
-    setProgress(true, 10);
+    doc.status = 'analyzing';
+    renderDocList();
     log('info', 'Firmando: ' + doc.name);
+    setProgress(true, 25);
     const signed = await signDoc(doc);
-    setProgress(true, 80);
-    downloadBytes(signed, doc.name.replace('.pdf', '_firmado.pdf'));
+    setProgress(true, 85);
+    download(signed, doc.name.replace(/\.pdf$/i, '_firmado.pdf'));
     doc.status = 'done';
-    doc.signed = true;
     renderDocList();
     setProgress(true, 100);
-    log('ok', '✓ ' + doc.name + ' firmado y descargado');
-    setTimeout(() => setProgress(false), 1200);
-    showSignedFoot();
+    log('ok', '✓ ' + doc.name);
+    setTimeout(() => setProgress(false), 900);
+    updateFooter();
   } catch(e) {
-    doc.status = 'err';
+    doc.status = 'error';
     doc.error = e.message;
     renderDocList();
     log('err', doc.name + ': ' + e.message);
@@ -820,105 +728,92 @@ async function signAndDownload(doc) {
   }
 }
 
-// Firmar los documentos "ok" seleccionados (no firmados aún)
 async function signSelected() {
-  const pending = docs.filter(d => d.status === 'ok' && !d.signed);
-  if (pending.length === 0) { log('info', 'No hay documentos pendientes'); return; }
+  const pending = docs.filter(d => d.status === 'ready' || d.status === 'pending');
+  if (!pending.length) { log('info', 'No hay documentos listos'); return; }
   setButtons(false);
   for (let i = 0; i < pending.length; i++) {
-    setProgress(true, Math.round((i / pending.length) * 100));
+    setProgress(true, Math.round(i / pending.length * 80));
     await signAndDownload(pending[i]);
   }
   setButtons(true);
   updateButtons();
 }
 
-// Firmar TODOS (incluyendo los ya firmados → "nueva tanda")
 async function signAll() {
-  if (docs.length === 0) { log('info', 'Añade documentos primero'); return; }
-  // Resetear estado para nueva tanda
-  docs.forEach(d => { if (d.bytes) { d.status = 'ok'; d.signed = false; d.error = null; } });
+  if (!docs.length) { log('info', 'Añade documentos primero'); return; }
+  docs.forEach(d => {
+    if (d.status === 'done' || d.status === 'error') {
+      d.status = (d.sigFields?.length || d.textMatches?.length) ? 'ready' : 'pending';
+      d.error = null;
+    }
+  });
   renderDocList();
   await signSelected();
 }
 
-// ═══════════════════════════════════════════════
-// UTILIDADES
-// ═══════════════════════════════════════════════
-function sanitize(str) {
-  return String(str)
-    .replace(/[^\x20-\x7E\xA0-\xFF]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+// ═══════════════════════════════════════════════════════
+// UTIL
+// ═══════════════════════════════════════════════════════
+function sanitize(s) {
+  // Solo ASCII imprimible + Latin-1 supplement (lo que WinAnsi soporta)
+  return String(s).replace(/[^\x20-\x7E\xA0-\xFF]/g,' ').replace(/\s+/g,' ').trim();
 }
-
-function downloadBytes(bytes, filename) {
-  const blob = new Blob([bytes], { type: 'application/pdf' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 }
-
+function escAttr(s) { return escHtml(s); }
+function download(bytes, name) {
+  const url = URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+  const a = Object.assign(document.createElement('a'),{href:url,download:name});
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),5000);
+}
 function base64ToBuffer(b64) {
-  const bin = atob(b64);
-  const buf = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  const bin = atob(b64), buf = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
   return buf.buffer;
 }
-
-function fmtSize(bytes) {
-  if (!bytes) return '—';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024*1024) return (bytes/1024).toFixed(0) + ' KB';
-  return (bytes/1024/1024).toFixed(1) + ' MB';
+function fmtSize(b) {
+  if (!b) return '—';
+  if (b<1024) return b+'B';
+  if (b<1048576) return (b/1024).toFixed(0)+'KB';
+  return (b/1048576).toFixed(1)+'MB';
 }
-
-function setProgress(visible, pct) {
-  const bar = document.getElementById('progressBar');
-  const fill = document.getElementById('progressFill');
-  if (visible) {
-    bar.classList.add('visible');
-    if (pct !== undefined) fill.style.width = pct + '%';
-  } else {
-    bar.classList.remove('visible');
-    fill.style.width = '0%';
-  }
+function setProgress(vis, pct) {
+  const bar = document.getElementById('progBar'), fill = document.getElementById('progFill');
+  vis ? bar.classList.add('vis') : bar.classList.remove('vis');
+  if (pct !== undefined) fill.style.width = pct + '%';
+  if (!vis) fill.style.width = '0%';
 }
-
 function log(type, msg) {
   const area = document.getElementById('logArea');
-  area.classList.add('visible');
+  area.classList.add('vis');
   const line = document.createElement('div');
-  line.className = 'log-line ' + type;
-  const t = new Date().toLocaleTimeString('es-ES');
-  line.textContent = '[' + t + '] ' + msg;
+  line.className = type;
+  line.textContent = '[' + new Date().toLocaleTimeString('es-ES') + '] ' + msg;
   area.appendChild(line);
   area.scrollTop = area.scrollHeight;
-  // Limitar a 30 líneas
-  while (area.children.length > 30) area.removeChild(area.firstChild);
+  while (area.children.length > 25) area.removeChild(area.firstChild);
 }
-
 function updateButtons() {
-  const hasPending = docs.some(d => d.status === 'ok' && !d.signed);
-  const hasAny = docs.length > 0;
-  document.getElementById('btnSign').disabled  = !hasPending;
-  document.getElementById('btnBatch').disabled = !hasAny;
+  const ready = docs.some(d => d.status === 'ready' || d.status === 'pending');
+  const any   = docs.length > 0;
+  document.getElementById('btnSign').disabled  = !ready;
+  document.getElementById('btnBatch').disabled = !any;
 }
-
-function setButtons(enabled) {
-  document.getElementById('btnSign').disabled  = !enabled;
-  document.getElementById('btnBatch').disabled = !enabled;
+function setButtons(en) {
+  document.getElementById('btnSign').disabled  = !en;
+  document.getElementById('btnBatch').disabled = !en;
 }
-
-function showSignedFoot() {
-  const done = docs.filter(d => d.signed).length;
-  const foot = document.getElementById('signedFoot');
-  if (done > 0) {
-    foot.style.display = 'block';
-    foot.textContent = `Ya firmados: ${done} documento(s)`;
+function updateFooter() {
+  const n = docs.filter(d => d.status === 'done').length;
+  const f = document.getElementById('signedFoot');
+  if (n > 0) {
+    f.style.display = 'block';
+    f.textContent = `Ya firmados: ${n} documento(s)`;
+  } else {
+    f.style.display = 'none';
   }
 }
 </script>
