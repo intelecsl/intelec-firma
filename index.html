@@ -1,0 +1,1510 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Firma Digital Intelec</title>
+
+<!-- ═══════════════════════════════════════════════════════════
+     PARCHE CRÍTICO: antes de cargar pdf-lib
+     pdf-lib usa decodeURIComponent al parsear nombres de fuentes
+     en PDFs de SAP/ECI que tienen secuencias %XX inválidas
+═══════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  var _d = window.decodeURIComponent;
+  window.decodeURIComponent = function(s){ try{ return _d(s); }catch(e){ return s; } };
+  var _u = window.decodeURI;
+  window.decodeURI = function(s){ try{ return _u(s); }catch(e){ return s; } };
+})();
+</script>
+
+<!-- PDF.js para ANALIZAR el PDF (detectar campos AcroForm + texto "firma") -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- pdf-lib para ESCRIBIR el sello visible -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<!-- node-forge para FIRMA CRIPTOGRÁFICA PKCS#7 (hash + cert + PKCS#7) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/forge/1.3.1/forge.min.js"></script>
+<!-- JSZip para empaquetar varios PDFs firmados (los navegadores bloquean descargas múltiples) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+:root{
+  --bg:#0f1117; --panel:#181c26; --panel2:#1e2335; --border:#2a2f3e;
+  --accent:#3b7de9; --accent2:#5a9cf8;
+  --danger:#e05555; --success:#3ec97a; --warn:#e0a035;
+  --text:#e8eaf0; --muted:#7a8099;
+  --r:8px; --font:'Segoe UI',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:13px;
+  height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+
+header{background:linear-gradient(135deg,#1a2035,#0f1525);
+  border-bottom:1px solid var(--border);padding:10px 14px 8px;flex-shrink:0;}
+.hrow{display:flex;align-items:center;gap:8px;margin-bottom:2px;}
+.logo{width:28px;height:28px;background:var(--accent);border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:700;color:#fff;}
+.appname{font-size:14px;font-weight:600;color:#fff;}
+.vbadge{margin-left:auto;font-size:10px;color:var(--muted);
+  background:rgba(255,255,255,.05);padding:2px 7px;border-radius:10px;
+  border:1px solid var(--border);}
+.hsub{font-size:10px;color:var(--muted);padding-left:36px;}
+
+.scroll{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;}
+.scroll::-webkit-scrollbar{width:4px;}
+.scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+
+.slabel{font-size:10px;font-weight:600;letter-spacing:1px;
+  text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
+
+/* CERTIFICADO */
+.cert-row{display:flex;gap:6px;}
+.cert-pick{flex:1;background:var(--panel);border:1.5px dashed var(--border);
+  border-radius:var(--r);padding:8px 10px;cursor:pointer;transition:.2s;
+  display:flex;align-items:center;gap:8px;min-width:0;}
+.cert-pick:hover{border-color:var(--accent);background:rgba(59,125,233,.06);}
+.cert-pick.loaded{border-color:var(--success);background:rgba(62,201,122,.05);border-style:solid;}
+.cp-icon{font-size:18px;color:var(--muted);flex-shrink:0;}
+.cert-pick.loaded .cp-icon{color:var(--success);}
+.cp-text{min-width:0;}
+.cp-name{font-size:12px;font-weight:500;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;}
+.cp-hint{font-size:10px;color:var(--muted);}
+.pin-box{width:90px;background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--r);padding:8px 10px;display:flex;flex-direction:column;gap:3px;}
+.pin-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);}
+.pin-in{background:transparent;border:none;outline:none;color:var(--text);
+  font-size:14px;letter-spacing:3px;width:100%;font-family:monospace;}
+
+/* DROP ZONE */
+.drop-zone{background:var(--panel);border:1.5px dashed var(--border);
+  border-radius:var(--r);padding:16px 12px;text-align:center;
+  cursor:pointer;transition:.2s;position:relative;}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);
+  background:rgba(59,125,233,.07);}
+.drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;}
+.dz-icon{font-size:26px;margin-bottom:4px;}
+.dz-title{font-size:12px;font-weight:600;margin-bottom:2px;}
+.dz-hint{font-size:10px;color:var(--muted);}
+
+/* LISTA DOCUMENTOS */
+.doc-list{display:flex;flex-direction:column;gap:4px;}
+.doc-item{background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--r);padding:7px 9px;display:flex;align-items:center;
+  gap:7px;cursor:pointer;transition:.15s;}
+.doc-item:hover{border-color:var(--accent2);}
+.doc-item.active{border-color:var(--accent);background:rgba(59,125,233,.08);}
+.doc-item.s-analyzing{border-left:3px solid var(--warn);}
+.doc-item.s-pending{border-left:3px solid var(--muted);}
+.doc-item.s-ready{border-left:3px solid var(--accent);}
+.doc-item.s-done{border-left:3px solid var(--success);background:rgba(62,201,122,.04);}
+.doc-item.s-error{border-left:3px solid var(--danger);}
+.di-icon{font-size:18px;flex-shrink:0;}
+.di-info{flex:1;min-width:0;}
+.di-name{font-size:11px;font-weight:500;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;}
+.di-meta{font-size:10px;color:var(--muted);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.di-badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;
+  flex-shrink:0;letter-spacing:.3px;}
+.b-analyzing{background:rgba(224,160,53,.15);color:var(--warn);}
+.b-pending{background:rgba(122,128,153,.15);color:var(--muted);}
+.b-ready{background:rgba(59,125,233,.2);color:var(--accent2);}
+.b-done{background:rgba(62,201,122,.2);color:var(--success);}
+.b-error{background:rgba(224,85,85,.15);color:var(--danger);}
+.di-rm{background:none;border:none;color:var(--muted);cursor:pointer;
+  font-size:12px;padding:2px 4px;border-radius:4px;flex-shrink:0;transition:.15s;}
+.di-rm:hover{color:var(--danger);}
+
+/* CONFIG DOCUMENTO ACTIVO */
+.doc-cfg{background:var(--panel2);border:1px solid var(--border);
+  border-radius:var(--r);padding:10px;display:none;flex-direction:column;gap:8px;}
+.doc-cfg.visible{display:flex;}
+.cfg-title{font-size:11px;font-weight:600;color:var(--accent2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+/* DETECCIÓN */
+.detect-box{background:rgba(0,0,0,.2);border:1px solid var(--border);
+  border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:4px;}
+.detect-hdr{display:flex;align-items:center;gap:6px;font-size:10px;
+  font-weight:600;text-transform:uppercase;letter-spacing:.7px;margin-bottom:2px;}
+.detect-hdr .ico{font-size:12px;}
+.detect-empty{font-size:10px;color:var(--muted);font-style:italic;}
+.field-btn{background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:5px;padding:5px 8px;cursor:pointer;font-size:11px;
+  font-family:var(--font);color:var(--text);text-align:left;transition:.15s;
+  display:flex;align-items:center;gap:6px;width:100%;}
+.field-btn:hover{border-color:var(--accent);background:rgba(59,125,233,.08);}
+.field-btn.sel{border-color:var(--success);background:rgba(62,201,122,.1);}
+.field-tag{font-size:9px;font-weight:700;padding:1px 5px;border-radius:5px;flex-shrink:0;}
+.tag-acro{background:rgba(59,125,233,.2);color:var(--accent2);}
+.tag-text{background:rgba(224,160,53,.2);color:var(--warn);}
+.field-info{flex:1;min-width:0;font-size:10px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* OPCIONES */
+.pos-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;}
+.opt-g{display:flex;flex-direction:column;gap:3px;}
+.opt-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);}
+.opt-sel,.opt-in{background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:5px;color:var(--text);font-size:11px;padding:4px 7px;outline:none;
+  width:100%;font-family:var(--font);}
+.opt-sel:focus,.opt-in:focus{border-color:var(--accent);}
+.opt-sel option{background:#1e2333;}
+.opt-full{grid-column:1/-1;}
+
+.prog-bar{height:3px;background:var(--border);border-radius:2px;
+  overflow:hidden;display:none;}
+.prog-bar.vis{display:block;}
+.prog-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
+  width:0%;transition:width .3s;border-radius:2px;}
+
+.log{background:rgba(0,0,0,.3);border:1px solid var(--border);
+  border-radius:var(--r);padding:7px 9px;
+  font-family:'Consolas','Courier New',monospace;font-size:10px;line-height:1.6;
+  max-height:80px;overflow-y:auto;display:none;}
+.log.vis{display:block;}
+.log .ok{color:var(--success);} .log .err{color:var(--danger);}
+.log .info{color:var(--accent2);} .log .def{color:var(--muted);}
+
+.action-row{display:flex;gap:6px;}
+.btn{flex:1;padding:10px 8px;border:none;border-radius:var(--r);cursor:pointer;
+  font-size:12px;font-weight:600;letter-spacing:.3px;font-family:var(--font);
+  transition:.15s;display:flex;align-items:center;justify-content:center;gap:6px;}
+.btn:disabled{opacity:.35;cursor:not-allowed;}
+.btn-primary{background:linear-gradient(135deg,var(--accent),#2a5cc8);color:#fff;
+  box-shadow:0 2px 8px rgba(59,125,233,.3);}
+.btn-primary:hover:not(:disabled){box-shadow:0 4px 16px rgba(59,125,233,.45);
+  transform:translateY(-1px);}
+.btn-batch{background:linear-gradient(135deg,#3a6e3a,#2a4f2a);color:#a3dba3;
+  border:1px solid #3a6e3a;}
+.btn-batch:hover:not(:disabled){background:linear-gradient(135deg,#4a8a4a,#3a6a3a);}
+
+.btn-mail{background:rgba(59,125,233,.12);border:1px solid rgba(59,125,233,.25);
+  color:var(--accent2);border-radius:var(--r);padding:6px 10px;
+  font-size:11px;font-weight:600;cursor:pointer;font-family:var(--font);
+  width:100%;text-align:center;transition:.15s;margin-bottom:7px;display:none;}
+.btn-mail:hover{background:rgba(59,125,233,.2);}
+
+.sep{height:1px;background:var(--border);}
+input[type="file"]{display:none;}
+
+/* PREVIEW CANVAS */
+.preview-wrap{background:#000;border:1px solid var(--border);border-radius:6px;
+  padding:6px;display:flex;flex-direction:column;align-items:center;gap:5px;
+  max-height:280px;overflow:auto;}
+.preview-wrap canvas{max-width:100%;height:auto;display:block;
+  box-shadow:0 0 0 1px rgba(255,255,255,.1);}
+.preview-empty{font-size:10px;color:var(--muted);font-style:italic;padding:30px 0;}
+.preview-loading{font-size:10px;color:var(--accent2);padding:30px 0;}
+
+/* FORMATO DESCARGA */
+.fmt-row{display:flex;gap:4px;}
+.fmt-btn{flex:1;background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:5px;padding:6px;font-size:10px;font-family:var(--font);
+  color:var(--text);cursor:pointer;transition:.15s;
+  display:flex;flex-direction:column;align-items:center;gap:2px;}
+.fmt-btn:hover{border-color:var(--accent2);}
+.fmt-btn.active{border-color:var(--success);background:rgba(62,201,122,.1);
+  color:var(--success);}
+.fmt-btn .fmt-ico{font-size:14px;}
+.fmt-btn .fmt-lbl{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
+
+/* RECORDAR CERTIFICADO */
+.cert-options{display:flex;align-items:center;justify-content:space-between;
+  margin-top:6px;font-size:11px;}
+.remember-lbl{display:flex;align-items:center;gap:6px;cursor:pointer;
+  color:var(--muted);user-select:none;}
+.remember-lbl input{cursor:pointer;}
+.remember-lbl:hover{color:var(--text);}
+.btn-forget{background:none;border:none;color:var(--danger);font-size:10px;
+  cursor:pointer;padding:2px 6px;border-radius:4px;font-family:var(--font);
+  display:none;}
+.btn-forget:hover{background:rgba(224,85,85,.1);}
+.btn-forget.visible{display:inline-block;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hrow">
+    <div class="logo">✍</div>
+    <span class="appname">FIRMA DIGITAL INTELEC</span>
+    <span class="vbadge">v3.00</span>
+  </div>
+  <div class="hsub">PKCS#7 SHA-256 · Vista previa · Persistencia</div>
+</header>
+
+<div class="scroll">
+
+  <!-- CERTIFICADO -->
+  <div>
+    <div class="slabel">🔐 Certificado digital</div>
+    <div class="cert-row">
+      <div class="cert-pick" id="certPickBtn" onclick="document.getElementById('certFile').click()">
+        <span class="cp-icon" id="certIcon">🪪</span>
+        <div class="cp-text">
+          <div class="cp-name" id="certName">Seleccionar certificado</div>
+          <div class="cp-hint">.p12 / .pfx</div>
+        </div>
+      </div>
+      <div class="pin-box">
+        <div class="pin-lbl">PIN</div>
+        <input type="password" class="pin-in" id="certPin" placeholder="••••••" autocomplete="off">
+      </div>
+    </div>
+    <div class="cert-options">
+      <label class="remember-lbl">
+        <input type="checkbox" id="rememberCert"> Recordar certificado en este equipo
+      </label>
+      <button class="btn-forget" id="btnForget" onclick="forgetCert()">Olvidar</button>
+    </div>
+    <input type="file" id="certFile" accept=".p12,.pfx" onchange="loadCert(this)">
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- DOCUMENTOS -->
+  <div>
+    <div class="slabel">📄 Documentos <span id="docCount" style="color:var(--accent2)"></span></div>
+    <button class="btn-mail" id="btnMail" onclick="loadFromOutlook()">⬇ Cargar adjuntos del correo</button>
+    <div class="drop-zone" id="dropZone"
+         ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)"
+         onclick="document.getElementById('pdfFiles').click()">
+      <input type="file" id="pdfFiles" accept=".pdf" multiple onchange="addFiles(this.files)">
+      <div class="dz-icon">📂</div>
+      <div class="dz-title">Arrastra o clic · Multi-selección</div>
+      <div class="dz-hint">PDF · Desde equipo o adjunto</div>
+    </div>
+    <div id="docList" class="doc-list" style="margin-top:7px"></div>
+  </div>
+
+  <!-- CONFIG DEL DOCUMENTO ACTIVO -->
+  <div class="doc-cfg" id="docCfg">
+    <div class="cfg-title" id="cfgTitle">—</div>
+
+    <div>
+      <div class="detect-hdr"><span class="ico">🖼️</span> Vista previa de la firma</div>
+      <div class="preview-wrap" id="previewWrap">
+        <div class="preview-empty">Selecciona un campo para ver dónde irá la firma</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="detect-hdr"><span class="ico">🎯</span> Campos de firma AcroForm</div>
+      <div class="detect-box" id="boxAcro">
+        <div class="detect-empty">—</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="detect-hdr"><span class="ico">🔤</span> Texto "firma" detectado</div>
+      <div class="detect-box" id="boxText">
+        <div class="detect-empty">—</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="detect-hdr"><span class="ico">📐</span> Posición manual (fallback)</div>
+      <div class="pos-grid">
+        <div class="opt-g">
+          <div class="opt-lbl">Posición</div>
+          <select class="opt-sel" id="sigPos">
+            <option value="bottom-right">Inferior derecha</option>
+            <option value="bottom-left">Inferior izquierda</option>
+            <option value="top-right">Superior derecha</option>
+            <option value="top-left">Superior izquierda</option>
+          </select>
+        </div>
+        <div class="opt-g">
+          <div class="opt-lbl">Página</div>
+          <select class="opt-sel" id="sigPage">
+            <option value="last">Última</option>
+            <option value="first">Primera</option>
+            <option value="all">Todas</option>
+          </select>
+        </div>
+        <div class="opt-g opt-full">
+          <div class="opt-lbl">Texto de firma (opcional)</div>
+          <input type="text" class="opt-in" id="sigText" placeholder="Firmado digitalmente por Intelec S.L.">
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="detect-hdr"><span class="ico">📦</span> Formato de descarga</div>
+      <div class="fmt-row">
+        <button class="fmt-btn active" data-fmt="auto" onclick="setDownloadFormat('auto')">
+          <span class="fmt-ico">⚡</span><span class="fmt-lbl">Auto</span>
+        </button>
+        <button class="fmt-btn" data-fmt="pdf" onclick="setDownloadFormat('pdf')">
+          <span class="fmt-ico">📄</span><span class="fmt-lbl">PDF</span>
+        </button>
+        <button class="fmt-btn" data-fmt="zip" onclick="setDownloadFormat('zip')">
+          <span class="fmt-ico">📦</span><span class="fmt-lbl">ZIP</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="prog-bar" id="progBar"><div class="prog-fill" id="progFill"></div></div>
+  <div class="log" id="logArea"></div>
+
+  <div class="action-row">
+    <button class="btn btn-primary" id="btnSign" onclick="signSelected()" disabled>✍ FIRMAR</button>
+    <button class="btn btn-batch" id="btnBatch" onclick="signAll()" disabled>⚡ Nueva tanda</button>
+  </div>
+
+  <div id="signedFoot" style="font-size:10px;color:var(--muted);text-align:center;display:none"></div>
+
+</div>
+
+<script>
+// PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ═══════════════════════════════════════════════════════
+// ESTADO
+// ═══════════════════════════════════════════════════════
+const docs = [];
+let currentDocId = null;
+let certBytes = null;
+let certNameG = '';
+let outlookReady = false;
+let downloadFormat = 'auto'; // 'auto' | 'pdf' | 'zip'
+const fieldSel = {}; // { docId: { type:'acro'|'text'|'manual', idx } }
+
+// ═══════════════════════════════════════════════════════
+// PERSISTENCIA DEL CERTIFICADO (IndexedDB + localStorage)
+// ═══════════════════════════════════════════════════════
+const CERT_DB     = 'firmaIntelec';
+const CERT_STORE  = 'cert';
+const CERT_KEY    = 'p12';
+const LS_REMEMBER = 'firmaIntelec_remember';
+const LS_PIN      = 'firmaIntelec_pin';
+const LS_NAME     = 'firmaIntelec_name';
+
+function openCertDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(CERT_DB, 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(CERT_STORE)) db.createObjectStore(CERT_STORE);
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error || new Error('IndexedDB error'));
+  });
+}
+
+async function saveCertStored(bytes, name) {
+  const db = await openCertDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([CERT_STORE], 'readwrite');
+    tx.objectStore(CERT_STORE).put({ bytes, name }, CERT_KEY);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = e => { db.close(); reject(e.target.error); };
+  });
+}
+
+async function loadCertStored() {
+  const db = await openCertDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([CERT_STORE], 'readonly');
+    const req = tx.objectStore(CERT_STORE).get(CERT_KEY);
+    req.onsuccess = e => { db.close(); resolve(e.target.result || null); };
+    req.onerror   = e => { db.close(); reject(e.target.error); };
+  });
+}
+
+async function deleteCertStored() {
+  const db = await openCertDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([CERT_STORE], 'readwrite');
+    tx.objectStore(CERT_STORE).delete(CERT_KEY);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = e => { db.close(); reject(e.target.error); };
+  });
+}
+
+// Codificación leve del PIN (no es seguridad real, solo evita PIN en claro al ojo)
+function obfuscate(s) { return btoa(unescape(encodeURIComponent(s || ''))); }
+function deobfuscate(s) {
+  try { return decodeURIComponent(escape(atob(s || ''))); } catch(e) { return ''; }
+}
+
+async function tryAutoLoadCert() {
+  if (localStorage.getItem(LS_REMEMBER) !== '1') return;
+  try {
+    const stored = await loadCertStored();
+    if (!stored || !stored.bytes) return;
+
+    certBytes = stored.bytes;
+    certNameG = stored.name || localStorage.getItem(LS_NAME) || 'cert.p12';
+    document.getElementById('certName').textContent = certNameG;
+    document.getElementById('certIcon').textContent = '✅';
+    document.getElementById('certPickBtn').classList.add('loaded');
+    document.getElementById('rememberCert').checked = true;
+    document.getElementById('btnForget').classList.add('visible');
+
+    const storedPin = deobfuscate(localStorage.getItem(LS_PIN));
+    if (storedPin) document.getElementById('certPin').value = storedPin;
+
+    log('ok', 'Certificado restaurado: ' + certNameG);
+    updateButtons();
+  } catch(e) {
+    console.warn('tryAutoLoadCert', e);
+  }
+}
+
+async function forgetCert() {
+  try {
+    await deleteCertStored();
+    localStorage.removeItem(LS_REMEMBER);
+    localStorage.removeItem(LS_PIN);
+    localStorage.removeItem(LS_NAME);
+
+    certBytes = null;
+    certNameG = '';
+    document.getElementById('certName').textContent = 'Seleccionar certificado';
+    document.getElementById('certIcon').textContent = '🪪';
+    document.getElementById('certPickBtn').classList.remove('loaded');
+    document.getElementById('certPin').value = '';
+    document.getElementById('rememberCert').checked = false;
+    document.getElementById('btnForget').classList.remove('visible');
+
+    log('ok', 'Certificado guardado borrado de este equipo');
+    updateButtons();
+  } catch(e) {
+    log('err', 'No se pudo borrar el certificado: ' + e.message);
+  }
+}
+
+// Guardar PIN cada vez que el usuario lo escribe (si está marcado "Recordar")
+function setupPinSync() {
+  const pinIn = document.getElementById('certPin');
+  pinIn.addEventListener('input', () => {
+    if (document.getElementById('rememberCert').checked && certBytes) {
+      localStorage.setItem(LS_PIN, obfuscate(pinIn.value));
+    }
+  });
+
+  const remember = document.getElementById('rememberCert');
+  remember.addEventListener('change', async () => {
+    if (remember.checked) {
+      if (certBytes) {
+        try {
+          await saveCertStored(certBytes, certNameG);
+          localStorage.setItem(LS_REMEMBER, '1');
+          localStorage.setItem(LS_NAME, certNameG);
+          if (pinIn.value) localStorage.setItem(LS_PIN, obfuscate(pinIn.value));
+          document.getElementById('btnForget').classList.add('visible');
+          log('ok', 'Certificado guardado para futuras sesiones');
+        } catch(e) {
+          log('err', 'No se pudo guardar: ' + e.message);
+          remember.checked = false;
+        }
+      }
+    } else {
+      // Si lo desmarca: borrar PIN guardado pero mantener el cert hasta que pulse "Olvidar"
+      localStorage.removeItem(LS_REMEMBER);
+      localStorage.removeItem(LS_PIN);
+      log('info', 'Ya no se recordará entre sesiones');
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// FORMATO DE DESCARGA
+// ═══════════════════════════════════════════════════════
+function setDownloadFormat(fmt) {
+  downloadFormat = fmt;
+  document.querySelectorAll('.fmt-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.fmt === fmt);
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// REFRESCAR PREVIEW al cambiar opciones manuales
+// ═══════════════════════════════════════════════════════
+function setupPreviewListeners() {
+  ['sigPos', 'sigPage'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      const doc = docs.find(d => d.id === currentDocId);
+      if (doc) renderPreview(doc);
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// OFFICE.JS
+// ═══════════════════════════════════════════════════════
+function initOffice() {
+  if (typeof Office === 'undefined') return;
+  Office.onReady(info => {
+    if (info.host === Office.HostType.Outlook) {
+      outlookReady = true;
+      checkOutlookAttachments();
+    }
+  });
+}
+if (typeof Office === 'undefined') {
+  const s = document.createElement('script');
+  s.src = 'https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js';
+  s.onload = initOffice;
+  document.head.appendChild(s);
+} else { initOffice(); }
+
+// Bootstrap: persistencia + listeners
+window.addEventListener('DOMContentLoaded', () => {
+  setupPinSync();
+  setupPreviewListeners();
+  tryAutoLoadCert();
+});
+
+function checkOutlookAttachments() {
+  try {
+    const item = Office.context.mailbox.item;
+    const pdfs = (item?.attachments || []).filter(a => a.name?.toLowerCase().endsWith('.pdf'));
+    if (pdfs.length > 0) {
+      const btn = document.getElementById('btnMail');
+      btn.style.display = 'block';
+      btn.textContent = `⬇ Cargar adjuntos del correo (${pdfs.length})`;
+    }
+  } catch(e) {}
+}
+
+function loadFromOutlook() {
+  if (!outlookReady) { log('err','Office.js no disponible'); return; }
+  const item = Office.context.mailbox.item;
+  const pdfs = (item?.attachments || []).filter(a => a.name?.toLowerCase().endsWith('.pdf'));
+  document.getElementById('btnMail').disabled = true;
+  pdfs.forEach(att => {
+    item.getAttachmentContentAsync(att.id, {}, r => {
+      if (r.status !== Office.AsyncResultStatus.Succeeded) {
+        log('err', att.name + ': ' + r.error.message); return;
+      }
+      addDoc(att.name, base64ToBuffer(r.value.content));
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// DRAG & DROP
+// ═══════════════════════════════════════════════════════
+function onDragOver(e) { e.preventDefault(); document.getElementById('dropZone').classList.add('drag-over'); }
+function onDragLeave() { document.getElementById('dropZone').classList.remove('drag-over'); }
+function onDrop(e) { e.preventDefault(); onDragLeave(); addFiles(e.dataTransfer.files); }
+function addFiles(files) {
+  Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf')).forEach(f => {
+    const r = new FileReader();
+    r.onload = e => addDoc(f.name, e.target.result);
+    r.readAsArrayBuffer(f);
+  });
+  document.getElementById('pdfFiles').value = '';
+}
+
+// ═══════════════════════════════════════════════════════
+// AÑADIR DOCUMENTO + ANÁLISIS
+// ═══════════════════════════════════════════════════════
+async function addDoc(name, buf) {
+  if (docs.some(d => d.name === name)) { log('info', name + ': ya en la lista'); return; }
+  const id = 'doc_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+  const doc = { id, name, bytes: buf, size: buf.byteLength,
+    status: 'analyzing', sigFields: [], textMatches: [], totalPages: 0, error: null };
+  docs.push(doc);
+  renderDocList();
+  log('info', 'Analizando: ' + name);
+
+  try {
+    // IMPORTANTE: pasar una COPIA a PDF.js. El worker de PDF.js transfiere
+    // (no copia) el ArrayBuffer y lo deja detached, dejando inutilizable
+    // el original para pdf-lib en el momento de firmar.
+    const pdfJs = await pdfjsLib.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
+    doc.totalPages  = pdfJs.numPages;
+    doc.sigFields   = await detectAcroFields(pdfJs);
+    doc.textMatches = await detectTextMatches(pdfJs);
+
+    // Auto-seleccionar el campo más relevante
+    if (doc.sigFields.length > 0) {
+      fieldSel[id] = { type: 'acro', idx: 0 };
+      doc.status = 'ready';
+    } else if (doc.textMatches.length > 0) {
+      fieldSel[id] = { type: 'text', idx: 0 };
+      doc.status = 'ready';
+    } else {
+      fieldSel[id] = { type: 'manual' };
+      doc.status = 'pending';
+    }
+
+    renderDocList();
+    if (!currentDocId) selectDoc(id);
+    else if (currentDocId === id) renderCfg(doc);
+
+    log('ok', `${name} → ${doc.sigFields.length} AcroForm · ${doc.textMatches.length} texto`);
+  } catch(err) {
+    doc.status = 'error';
+    doc.error = err.message;
+    renderDocList();
+    log('err', name + ': ' + err.message);
+    console.error(err);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// DETECCIÓN: Campos AcroForm Sig
+// ═══════════════════════════════════════════════════════
+async function detectAcroFields(pdfJs) {
+  const fields = [];
+  for (let p = 1; p <= pdfJs.numPages; p++) {
+    try {
+      const page = await pdfJs.getPage(p);
+      const anns = await page.getAnnotations();
+      for (const ann of anns) {
+        if (ann.subtype === 'Widget' && ann.fieldType === 'Sig') {
+          fields.push({
+            page: p,
+            rect: ann.rect.slice(),
+            name: ann.fieldName || ('Firma p.' + p),
+          });
+        }
+      }
+    } catch(e) { console.warn('detectAcroFields p.' + p, e); }
+  }
+  return fields;
+}
+
+// ═══════════════════════════════════════════════════════
+// DETECCIÓN: Texto "firma" / "signature"
+// ═══════════════════════════════════════════════════════
+const SIG_KEYWORDS = ['firma', 'firmado', 'firmante', 'firmar', 'signature', 'signed', 'sello'];
+
+async function detectTextMatches(pdfJs) {
+  const matches = [];
+  for (let p = 1; p <= pdfJs.numPages; p++) {
+    if (matches.length >= 8) break;
+    try {
+      const page = await pdfJs.getPage(p);
+      const content = await page.getTextContent();
+      const viewport = page.getViewport({ scale: 1 });
+
+      for (const item of content.items) {
+        const txt = (item.str || '').toLowerCase().trim();
+        if (!txt || txt.length > 60) continue;
+        const hit = SIG_KEYWORDS.find(kw => txt.includes(kw));
+        if (hit) {
+          const tr = item.transform;
+          if (!tr || tr.length < 6) continue;
+          const x = tr[4];
+          const y = tr[5];
+          // PDF usa origen abajo-izda; transform.f ya está en ese sistema
+          const pdfY = y;
+          const w = item.width || 80;
+          const h = item.height || 12;
+          matches.push({
+            page: p,
+            keyword: hit,
+            text: item.str.trim(),
+            // rect en coords PDF (origen abajo-izda)
+            rect: [x, pdfY - 4, x + Math.max(w, 150), pdfY + h + 6],
+          });
+          if (matches.length >= 8) break;
+        }
+      }
+    } catch(e) { console.warn('detectTextMatches p.' + p, e); }
+  }
+  return matches;
+}
+
+// ═══════════════════════════════════════════════════════
+// SELECCIÓN DOCUMENTO
+// ═══════════════════════════════════════════════════════
+function selectDoc(id) {
+  currentDocId = id;
+  renderDocList();
+  const doc = docs.find(d => d.id === id);
+  if (doc) renderCfg(doc);
+}
+
+function removeDoc(id) {
+  const i = docs.findIndex(d => d.id === id);
+  if (i >= 0) docs.splice(i, 1);
+  delete fieldSel[id];
+  if (currentDocId === id) {
+    currentDocId = docs[0]?.id || null;
+    if (currentDocId) renderCfg(docs[0]);
+    else document.getElementById('docCfg').classList.remove('visible');
+  }
+  renderDocList();
+  updateButtons();
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER LISTA
+// ═══════════════════════════════════════════════════════
+function renderDocList() {
+  document.getElementById('docCount').textContent = docs.length > 0 ? `(${docs.length})` : '';
+  const list = document.getElementById('docList');
+  if (!docs.length) { list.innerHTML = ''; updateButtons(); return; }
+
+  const ICO = { analyzing:'⏳', pending:'📄', ready:'✅', done:'✔️', error:'❌' };
+  const LBL = { analyzing:'…', pending:'Pend.', ready:'Listo', done:'Firmado', error:'Err' };
+  const BCL = { analyzing:'b-analyzing', pending:'b-pending', ready:'b-ready', done:'b-done', error:'b-error' };
+
+  list.innerHTML = docs.map(doc => {
+    const active = doc.id === currentDocId ? 'active' : '';
+    const acroN = doc.sigFields?.length ?? 0;
+    const textN = doc.textMatches?.length ?? 0;
+    let meta;
+    if (doc.status === 'error') meta = doc.error || 'Error';
+    else if (doc.status === 'analyzing') meta = 'Analizando…';
+    else meta = `${fmtSize(doc.size)} · ${acroN} AcroForm · ${textN} texto`;
+
+    return `<div class="doc-item s-${doc.status} ${active}" onclick="selectDoc('${doc.id}')">
+      <span class="di-icon">${ICO[doc.status]||'📄'}</span>
+      <div class="di-info">
+        <div class="di-name" title="${escAttr(doc.name)}">${escHtml(doc.name)}</div>
+        <div class="di-meta">${escHtml(meta)}</div>
+      </div>
+      <span class="di-badge ${BCL[doc.status]||'b-pending'}">${LBL[doc.status]||'—'}</span>
+      <button class="di-rm" onclick="event.stopPropagation();removeDoc('${doc.id}')" title="Eliminar">✕</button>
+    </div>`;
+  }).join('');
+  updateButtons();
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER CONFIG
+// ═══════════════════════════════════════════════════════
+function renderCfg(doc) {
+  const cfg = document.getElementById('docCfg');
+  cfg.classList.add('visible');
+  document.getElementById('cfgTitle').textContent = doc.name;
+
+  renderFieldBox('boxAcro', doc.sigFields, 'acro', doc.id,
+    f => `${escHtml(f.name)} · p.${f.page}`);
+  renderFieldBox('boxText', doc.textMatches, 'text', doc.id,
+    f => `"${escHtml(f.text)}" · p.${f.page}`);
+
+  renderPreview(doc);
+  updateButtons();
+}
+
+// ═══════════════════════════════════════════════════════
+// PREVIEW: render del PDF + rectángulo de la firma
+// ═══════════════════════════════════════════════════════
+let previewToken = 0; // para cancelar renders obsoletos
+async function renderPreview(doc) {
+  const wrap = document.getElementById('previewWrap');
+  const myToken = ++previewToken;
+  wrap.innerHTML = '<div class="preview-loading">⏳ Generando vista previa…</div>';
+
+  if (!doc || !doc.bytes) {
+    wrap.innerHTML = '<div class="preview-empty">Sin documento</div>';
+    return;
+  }
+
+  const sel = fieldSel[doc.id] || { type: 'manual' };
+  const sigPos  = document.getElementById('sigPos').value;
+  const sigPage = document.getElementById('sigPage').value;
+
+  // Determinar página + rectángulo de la firma en coordenadas PDF
+  let pageNum = 1;
+  let sigRect = null;       // [x, y, w, h] en coords PDF (origen abajo-izquierda)
+  let pageDims = null;      // {w, h}
+
+  if (sel.type === 'acro' && doc.sigFields[sel.idx]) {
+    const f = doc.sigFields[sel.idx];
+    pageNum = f.page;
+    const [x1, y1, x2, y2] = f.rect;
+    const w = Math.max(Math.abs(x2 - x1), 100);
+    const h = Math.max(Math.abs(y2 - y1), 28);
+    sigRect = [Math.min(x1, x2), Math.min(y1, y2), w, h];
+  } else if (sel.type === 'text' && doc.textMatches[sel.idx]) {
+    const m = doc.textMatches[sel.idx];
+    pageNum = m.page;
+    const [x1, y1, x2, y2] = m.rect;
+    const x = Math.min(x1, x2);
+    const y = Math.max(0, Math.min(y1, y2) - 32 - 4);
+    sigRect = [x, y, 185, 32];
+  } else {
+    if (sigPage === 'first') pageNum = 1;
+    else if (sigPage === 'last') pageNum = doc.totalPages || 1;
+    else pageNum = 1; // 'all' → muestra solo la primera
+    // sigRect lo calculamos abajo cuando tengamos las dimensiones
+  }
+
+  try {
+    const pdfJs = await pdfjsLib.getDocument({ data: new Uint8Array(doc.bytes.slice(0)) }).promise;
+    if (myToken !== previewToken) return; // cancelado
+
+    const page = await pdfJs.getPage(pageNum);
+    const baseViewport = page.getViewport({ scale: 1 });
+    pageDims = { w: baseViewport.width, h: baseViewport.height };
+
+    // Si manual, calcular sigRect ahora con dimensiones reales
+    if (!sigRect) {
+      const W = 185, H = 32, MARGIN = 18;
+      let x, y;
+      if      (sigPos === 'bottom-right') { x = pageDims.w - W - MARGIN; y = MARGIN; }
+      else if (sigPos === 'bottom-left')  { x = MARGIN; y = MARGIN; }
+      else if (sigPos === 'top-right')    { x = pageDims.w - W - MARGIN; y = pageDims.h - H - MARGIN; }
+      else                                { x = MARGIN; y = pageDims.h - H - MARGIN; }
+      sigRect = [x, y, W, H];
+    }
+
+    // Calcular escala para que quepa
+    const targetWidth = Math.max(200, wrap.clientWidth - 16);
+    const scale = Math.min(targetWidth / baseViewport.width, 1.5);
+    const viewport = page.getViewport({ scale });
+
+    if (myToken !== previewToken) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    if (myToken !== previewToken) return;
+
+    // Dibujar rectángulo de firma encima
+    // PDF: origen abajo-izquierda. Canvas: origen arriba-izquierda.
+    // Conversión: cy_canvas = (pageHeight - pdf_y - pdf_h) * scale
+    const [px, py, pw, ph] = sigRect;
+    const cx = px * scale;
+    const cy = (pageDims.h - py - ph) * scale;
+    const cw = pw * scale;
+    const ch = ph * scale;
+
+    // Halo rojo brillante para que llame la atención
+    ctx.save();
+    ctx.fillStyle = 'rgba(59, 125, 233, 0.25)';
+    ctx.fillRect(cx, cy, cw, ch);
+    ctx.strokeStyle = '#3b7de9';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(cx, cy, cw, ch);
+    ctx.setLineDash([]);
+
+    // Etiqueta
+    const labelText = '✍ FIRMA';
+    ctx.font = 'bold 11px sans-serif';
+    const labelW = ctx.measureText(labelText).width + 12;
+    const labelH = 16;
+    const labelY = Math.max(0, cy - labelH);
+    ctx.fillStyle = '#3b7de9';
+    ctx.fillRect(cx, labelY, labelW, labelH);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(labelText, cx + 6, labelY + 12);
+    ctx.restore();
+
+    if (myToken !== previewToken) return;
+    wrap.innerHTML = '';
+    const info = document.createElement('div');
+    info.style.cssText = 'font-size:10px;color:var(--muted);text-align:center;margin-bottom:2px';
+    info.textContent = `Página ${pageNum} de ${doc.totalPages || '?'} · ${Math.round(pageDims.w)}×${Math.round(pageDims.h)} pt`;
+    wrap.appendChild(info);
+    wrap.appendChild(canvas);
+  } catch(e) {
+    if (myToken !== previewToken) return;
+    console.warn('renderPreview', e);
+    wrap.innerHTML = `<div class="preview-empty">No se pudo generar vista previa: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderFieldBox(boxId, items, type, docId, labelFn) {
+  const box = document.getElementById(boxId);
+  const sel = fieldSel[docId];
+  if (!items || items.length === 0) {
+    box.innerHTML = '<div class="detect-empty">No detectado</div>';
+    return;
+  }
+  const tagClass = type === 'acro' ? 'tag-acro' : 'tag-text';
+  const tagLabel = type === 'acro' ? 'AcroForm' : 'Texto';
+  box.innerHTML = items.map((f, i) => {
+    const isSel = sel && sel.type === type && sel.idx === i;
+    return `<button class="field-btn ${isSel?'sel':''}"
+      onclick="selectField('${docId}','${type}',${i})">
+      <span class="field-tag ${tagClass}">${tagLabel}</span>
+      <span class="field-info">${labelFn(f)}</span>
+      ${isSel ? '<span style="margin-left:auto;font-size:11px;color:var(--success)">✓</span>' : ''}
+    </button>`;
+  }).join('');
+}
+
+function selectField(docId, type, idx) {
+  fieldSel[docId] = { type, idx };
+  const doc = docs.find(d => d.id === docId);
+  if (doc) {
+    if (doc.status === 'pending') doc.status = 'ready';
+    renderDocList();
+    renderCfg(doc);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// CERTIFICADO
+// ═══════════════════════════════════════════════════════
+function loadCert(input) {
+  const f = input.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = async e => {
+    certBytes = e.target.result;
+    certNameG = f.name;
+    document.getElementById('certName').textContent = f.name;
+    document.getElementById('certIcon').textContent = '✅';
+    document.getElementById('certPickBtn').classList.add('loaded');
+    log('ok', 'Certificado: ' + f.name);
+
+    // Si "Recordar" está marcado, persistir
+    if (document.getElementById('rememberCert').checked) {
+      try {
+        await saveCertStored(certBytes, certNameG);
+        localStorage.setItem(LS_REMEMBER, '1');
+        localStorage.setItem(LS_NAME, certNameG);
+        const pinVal = document.getElementById('certPin').value;
+        if (pinVal) localStorage.setItem(LS_PIN, obfuscate(pinVal));
+        document.getElementById('btnForget').classList.add('visible');
+        log('ok', 'Guardado para próximas sesiones');
+      } catch(err) {
+        log('err', 'No se pudo guardar: ' + err.message);
+      }
+    }
+
+    updateButtons();
+  };
+  r.readAsArrayBuffer(f);
+}
+
+// ═══════════════════════════════════════════════════════
+// PARSEO DE CERTIFICADO .p12/.pfx
+// ═══════════════════════════════════════════════════════
+function parseCertificate(pin) {
+  if (!certBytes) throw new Error('No hay certificado cargado');
+  if (pin === undefined || pin === null) pin = '';
+
+  let p12;
+  try {
+    const binStr = uint8ArrayToBinary(new Uint8Array(certBytes));
+    const asn1 = forge.asn1.fromDer(binStr);
+    p12 = forge.pkcs12.pkcs12FromAsn1(asn1, false, pin);
+  } catch(e) {
+    if (/mac|password|invalid/i.test(e.message || '')) {
+      throw new Error('PIN incorrecto del certificado');
+    }
+    throw new Error('Certificado inválido: ' + (e.message || 'error desconocido'));
+  }
+
+  const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || [];
+  const keyBagsShr = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] || [];
+  const keyBagsPlain = p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] || [];
+  const keyBags = keyBagsShr.concat(keyBagsPlain);
+
+  if (!certBags.length) throw new Error('Certificado sin certificados embebidos');
+  if (!keyBags.length) throw new Error('Certificado sin clave privada');
+
+  return {
+    cert: certBags[0].cert,
+    privateKey: keyBags[0].key,
+    certs: certBags.map(b => b.cert),
+  };
+}
+
+// ═══════════════════════════════════════════════════════
+// FIRMA CRIPTOGRÁFICA PKCS#7 (firma digital real)
+// ═══════════════════════════════════════════════════════
+async function signDoc(doc) {
+  const pin = document.getElementById('certPin').value;
+  if (!certBytes) throw new Error('Falta el certificado digital');
+  if (!pin) throw new Error('Falta el PIN del certificado');
+
+  // 1. Parsear certificado .p12
+  const { cert, privateKey, certs } = parseCertificate(pin);
+  const certCN = getCertCN(cert);
+
+  // 2. Cargar PDF y dibujar el sello visible
+  const { PDFDocument, PDFName, PDFNumber, PDFString, PDFHexString, PDFArray, rgb, StandardFonts } = PDFLib;
+  const pdfDoc = await PDFDocument.load(doc.bytes.slice(0), { ignoreEncryption: true });
+  const pages = pdfDoc.getPages();
+  const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const now = new Date();
+
+  const sigText = document.getElementById('sigText').value.trim() || `Firmado por ${certCN}`;
+  const sigPos  = document.getElementById('sigPos').value;
+  const sigPage = document.getElementById('sigPage').value;
+  const dateStr = sanitize(now.toLocaleDateString('es-ES') + ' ' + now.toLocaleTimeString('es-ES'));
+
+  const sel = fieldSel[doc.id] || { type: 'manual' };
+  const W = 185, H = 32, MARGIN = 18;
+  const fs = 7, fsSmall = 6;
+
+  // Determinar posición del sello + widget
+  let targets = [];
+  if (sel.type === 'acro' && doc.sigFields[sel.idx]) {
+    const f = doc.sigFields[sel.idx];
+    const [x1, y1, x2, y2] = f.rect;
+    const w = Math.max(Math.abs(x2 - x1), 100);
+    const h = Math.max(Math.abs(y2 - y1), 28);
+    targets = [{ pageIdx: f.page - 1, x: Math.min(x1, x2), y: Math.min(y1, y2), w, h }];
+    log('info', `Posición: campo AcroForm "${f.name}" p.${f.page}`);
+  } else if (sel.type === 'text' && doc.textMatches[sel.idx]) {
+    const m = doc.textMatches[sel.idx];
+    const [x1, y1, x2, y2] = m.rect;
+    const x = Math.min(x1, x2);
+    const y = Math.max(0, Math.min(y1, y2) - H - 4);
+    targets = [{ pageIdx: m.page - 1, x, y, w: W, h: H }];
+    log('info', `Posición: texto "${m.text}" p.${m.page}`);
+  } else {
+    let pageIdxs = [];
+    if (sigPage === 'first') pageIdxs = [0];
+    else if (sigPage === 'last') pageIdxs = [pages.length - 1];
+    else pageIdxs = pages.map((_, i) => i);
+    pageIdxs.forEach(pageIdx => {
+      const { width, height } = pages[pageIdx].getSize();
+      let x, y;
+      if      (sigPos === 'bottom-right') { x = width - W - MARGIN; y = MARGIN; }
+      else if (sigPos === 'bottom-left')  { x = MARGIN; y = MARGIN; }
+      else if (sigPos === 'top-right')    { x = width - W - MARGIN; y = height - H - MARGIN; }
+      else                                { x = MARGIN; y = height - H - MARGIN; }
+      targets.push({ pageIdx, x, y, w: W, h: H });
+    });
+    log('info', `Posición: manual ${sigPos} (${pageIdxs.length} pág.)`);
+  }
+
+  // Dibujar sello visible en cada target
+  for (const t of targets) {
+    if (t.pageIdx < 0 || t.pageIdx >= pages.length) continue;
+    const pg = pages[t.pageIdx];
+    pg.drawRectangle({ x:t.x, y:t.y, width:t.w, height:t.h,
+      color:rgb(.95,.97,1), opacity:.92,
+      borderColor:rgb(.24,.49,.91), borderWidth:.8 });
+    pg.drawRectangle({ x:t.x, y:t.y+t.h-4, width:t.w, height:4,
+      color:rgb(.24,.49,.91) });
+    pg.drawText(sanitize('✓ FIRMADO DIGITALMENTE'),
+      { x:t.x+4, y:t.y+t.h-14, size:fs, font, color:rgb(.1,.2,.5) });
+    pg.drawText(sanitize(certCN.length > 38 ? certCN.slice(0,35)+'...' : certCN),
+      { x:t.x+4, y:t.y+8, size:fsSmall, font, color:rgb(.3,.3,.5) });
+    pg.drawText(sanitize('Fecha: ' + dateStr),
+      { x:t.x+4, y:t.y+2, size:fsSmall, font, color:rgb(.3,.3,.5) });
+  }
+
+  // 3. Crear el campo /Sig + Widget + AcroForm para firma criptográfica
+  const PLACEHOLDER_HEX_LEN = 16384; // 8KB binarios -> suficiente para PKCS#7 con cadena
+  const placeholderHex = '0'.repeat(PLACEHOLDER_HEX_LEN);
+
+  // ByteRange placeholder con números grandes que dejen espacio para los reales
+  const sigDict = pdfDoc.context.obj({
+    Type: 'Sig',
+    Filter: 'Adobe.PPKLite',
+    SubFilter: 'adbe.pkcs7.detached',
+    ByteRange: pdfDoc.context.obj([
+      PDFNumber.of(0),
+      PDFNumber.of(9999999999),
+      PDFNumber.of(9999999999),
+      PDFNumber.of(9999999999),
+    ]),
+    Contents: PDFHexString.of(placeholderHex),
+    M: PDFString.of(formatPDFDate(now)),
+    Name: PDFString.of(safeStr(certCN)),
+    Reason: PDFString.of(safeStr(sigText)),
+    Location: PDFString.of('Espana'),
+    ContactInfo: PDFString.of('Intelec S.L.'),
+  });
+  const sigRef = pdfDoc.context.register(sigDict);
+
+  // Widget en la posición del primer target (si hay varios sellos, solo el primero es campo)
+  const t0 = targets[0];
+  const targetPage = pages[t0 ? t0.pageIdx : 0];
+  const wx = t0 ? t0.x : 0, wy = t0 ? t0.y : 0;
+  const wx2 = t0 ? t0.x + t0.w : 0, wy2 = t0 ? t0.y + t0.h : 0;
+
+  const widget = pdfDoc.context.obj({
+    Type: 'Annot',
+    Subtype: 'Widget',
+    FT: 'Sig',
+    Rect: pdfDoc.context.obj([
+      PDFNumber.of(wx), PDFNumber.of(wy),
+      PDFNumber.of(wx2), PDFNumber.of(wy2),
+    ]),
+    T: PDFString.of('IntelecSig_' + Date.now()),
+    V: sigRef,
+    P: targetPage.ref,
+    F: PDFNumber.of(4),
+  });
+  const widgetRef = pdfDoc.context.register(widget);
+
+  // Añadir el widget a las anotaciones de la página
+  let annots = targetPage.node.get(PDFName.of('Annots'));
+  if (annots) {
+    if (annots.constructor && annots.constructor.name === 'PDFRef') {
+      annots = pdfDoc.context.lookup(annots);
+    }
+    if (annots && typeof annots.push === 'function') {
+      annots.push(widgetRef);
+    } else {
+      targetPage.node.set(PDFName.of('Annots'), pdfDoc.context.obj([widgetRef]));
+    }
+  } else {
+    targetPage.node.set(PDFName.of('Annots'), pdfDoc.context.obj([widgetRef]));
+  }
+
+  // Añadir o extender el AcroForm del catálogo
+  let acroForm = pdfDoc.catalog.get(PDFName.of('AcroForm'));
+  if (acroForm) {
+    if (acroForm.constructor && acroForm.constructor.name === 'PDFRef') {
+      acroForm = pdfDoc.context.lookup(acroForm);
+    }
+    if (acroForm) {
+      let fields = acroForm.get(PDFName.of('Fields'));
+      if (fields && fields.constructor && fields.constructor.name === 'PDFRef') {
+        fields = pdfDoc.context.lookup(fields);
+      }
+      if (fields && typeof fields.push === 'function') {
+        fields.push(widgetRef);
+      } else {
+        acroForm.set(PDFName.of('Fields'), pdfDoc.context.obj([widgetRef]));
+      }
+      acroForm.set(PDFName.of('SigFlags'), PDFNumber.of(3));
+    }
+  } else {
+    const af = pdfDoc.context.obj({
+      SigFlags: PDFNumber.of(3),
+      Fields: pdfDoc.context.obj([widgetRef]),
+    });
+    pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
+  }
+
+  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.00'));
+  pdfDoc.setModificationDate(now);
+
+  // 4. Guardar el PDF SIN streams comprimidos para poder localizar el placeholder
+  let pdfBytes = await pdfDoc.save({ useObjectStreams: false });
+  pdfBytes = new Uint8Array(pdfBytes);
+
+  // 5. Localizar placeholders /Contents y /ByteRange
+  // Decodificar a binary string (1 char = 1 byte) para usar regex con offsets en bytes
+  const pdfStr = new TextDecoder('iso-8859-1').decode(pdfBytes);
+
+  // Regex muy específico: exigir EXACTAMENTE los 16384 ceros del placeholder, evita falsos positivos
+  const contentsRegex = new RegExp(`\\/Contents\\s*<(0{${PLACEHOLDER_HEX_LEN}})>`);
+  const contentsMatch = pdfStr.match(contentsRegex);
+  if (!contentsMatch) throw new Error('No se localizó el placeholder /Contents');
+
+  // Posiciones EXACTAS de '<' y '>' en bytes
+  const ltPos = contentsMatch.index + contentsMatch[0].indexOf('<');
+  const gtPos = contentsMatch.index + contentsMatch[0].lastIndexOf('>');
+
+  // ByteRange: convención EXCLUDE-BOTH-BRACKETS (estándar usado por Adobe, iText, node-signpdf)
+  //   - Range A: [0, ltPos-1]  → length = ltPos                     (excluye '<')
+  //   - Range B: [gtPos+1, end-1] → length = pdfBytes.length-gtPos-1 (excluye '>')
+  const realByteRange = [0, ltPos, gtPos + 1, pdfBytes.length - (gtPos + 1)];
+
+  const brMatch = pdfStr.match(/\/ByteRange\s*\[\s*0\s+9999999999\s+9999999999\s+9999999999\s*\]/);
+  if (!brMatch) throw new Error('No se localizó el placeholder /ByteRange');
+
+  const newBrStr = `/ByteRange [${realByteRange.join(' ')}]`;
+  if (newBrStr.length > brMatch[0].length) {
+    throw new Error(`ByteRange real (${newBrStr.length}) supera placeholder (${brMatch[0].length})`);
+  }
+  const paddedBr = newBrStr + ' '.repeat(brMatch[0].length - newBrStr.length);
+  for (let i = 0; i < paddedBr.length; i++) {
+    pdfBytes[brMatch.index + i] = paddedBr.charCodeAt(i);
+  }
+
+  // 6. Construir los datos a firmar usando EXACTAMENTE la misma convención que ByteRange
+  //    Range A: bytes [0, ltPos-1]  (excluye '<')
+  //    Range B: bytes [gtPos+1, end-1]  (excluye '>')
+  const range1 = pdfBytes.subarray(0, ltPos);            // bytes 0..ltPos-1
+  const range2 = pdfBytes.subarray(gtPos + 1);           // bytes gtPos+1..end-1
+  const dataToSign = new Uint8Array(range1.length + range2.length);
+  dataToSign.set(range1, 0);
+  dataToSign.set(range2, range1.length);
+
+  // Verificación de coherencia: longitud de datos firmados = suma de longitudes de ByteRange
+  const expectedLen = realByteRange[1] + realByteRange[3];
+  if (dataToSign.length !== expectedLen) {
+    throw new Error(`Inconsistencia: dataToSign=${dataToSign.length} vs ByteRange total=${expectedLen}`);
+  }
+
+  // 7. Firmar con PKCS#7 detached SHA-256
+  const dataBin = uint8ArrayToBinary(dataToSign);
+  const p7 = forge.pkcs7.createSignedData();
+  p7.content = forge.util.createBuffer(dataBin, 'binary');
+
+  // Añadir certificado del firmante y resto de la cadena
+  p7.addCertificate(cert);
+  for (const c of certs) {
+    if (c !== cert) {
+      try { p7.addCertificate(c); } catch(e) {}
+    }
+  }
+
+  p7.addSigner({
+    key: privateKey,
+    certificate: cert,
+    digestAlgorithm: forge.pki.oids.sha256,
+    authenticatedAttributes: [
+      { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
+      { type: forge.pki.oids.messageDigest },
+      { type: forge.pki.oids.signingTime, value: now },
+    ],
+  });
+  p7.sign({ detached: true });
+
+  const derBytes = forge.asn1.toDer(p7.toAsn1()).getBytes();
+  const hexSig = forge.util.bytesToHex(derBytes);
+
+  if (hexSig.length > PLACEHOLDER_HEX_LEN) {
+    throw new Error(`PKCS#7 (${hexSig.length} hex) > placeholder (${PLACEHOLDER_HEX_LEN}). Aumentar tamaño.`);
+  }
+
+  const paddedHex = (hexSig + '0'.repeat(PLACEHOLDER_HEX_LEN - hexSig.length)).toUpperCase();
+
+  // 8. Insertar la firma hex DENTRO de los brackets (entre '<' y '>')
+  //    El placeholder hex empieza en ltPos+1 y termina en gtPos-1
+  const placeholderHexStart = ltPos + 1;
+  for (let i = 0; i < paddedHex.length; i++) {
+    pdfBytes[placeholderHexStart + i] = paddedHex.charCodeAt(i);
+  }
+
+  // 9. AUTO-VERIFICACIÓN: re-leer ByteRange del PDF final y comparar hash
+  //    Garantiza que lo que firmamos == lo que Acrobat va a re-hashear
+  try {
+    const verifyRange1 = pdfBytes.subarray(realByteRange[0], realByteRange[0] + realByteRange[1]);
+    const verifyRange2 = pdfBytes.subarray(realByteRange[2], realByteRange[2] + realByteRange[3]);
+    const verifyData = new Uint8Array(verifyRange1.length + verifyRange2.length);
+    verifyData.set(verifyRange1, 0);
+    verifyData.set(verifyRange2, verifyRange1.length);
+
+    const md1 = forge.md.sha256.create();
+    md1.update(uint8ArrayToBinary(dataToSign));
+    const md2 = forge.md.sha256.create();
+    md2.update(uint8ArrayToBinary(verifyData));
+    const h1 = md1.digest().toHex();
+    const h2 = md2.digest().toHex();
+
+    if (h1 !== h2) {
+      throw new Error(`Hash mismatch: signed=${h1.slice(0,16)}... vs file=${h2.slice(0,16)}...`);
+    }
+    log('info', `Hash SHA-256 verificado: ${h1.slice(0, 24)}…`);
+  } catch(verifyErr) {
+    log('err', 'Auto-verificación falló: ' + verifyErr.message);
+    throw verifyErr;
+  }
+
+  log('ok', `Firma PKCS#7 SHA-256 (${Math.round(hexSig.length/2)} bytes) ByteRange=[${realByteRange.join(',')}]`);
+  return pdfBytes;
+}
+
+// ═══════════════════════════════════════════════════════
+// HELPERS de criptografía
+// ═══════════════════════════════════════════════════════
+function getCertCN(cert) {
+  try {
+    const cn = cert.subject.getField('CN');
+    if (cn && cn.value) return cn.value;
+    const o = cert.subject.getField('O');
+    if (o && o.value) return o.value;
+  } catch(e) {}
+  return certNameG ? certNameG.replace(/\.[^.]+$/, '') : 'Intelec S.L.';
+}
+
+function formatPDFDate(d) {
+  const pad = n => String(n).padStart(2, '0');
+  const offset = -d.getTimezoneOffset();
+  const sign = offset >= 0 ? '+' : '-';
+  const absOff = Math.abs(offset);
+  const offH = pad(Math.floor(absOff / 60));
+  const offM = pad(absOff % 60);
+  return `D:${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}` +
+         `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}` +
+         `${sign}${offH}'${offM}'`;
+}
+
+function uint8ArrayToBinary(bytes) {
+  let s = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, bytes.length)));
+  }
+  return s;
+}
+
+function safeStr(s) {
+  return String(s || '').replace(/[\n\r()\\]/g, ' ').slice(0, 100);
+}
+
+async function signSelected() {
+  const pending = docs.filter(d => d.status === 'ready' || d.status === 'pending');
+  if (!pending.length) { log('info', 'No hay documentos listos'); return; }
+  setButtons(false);
+
+  // Firmar TODOS primero, coleccionar bytes en memoria
+  const signed = []; // [{ name, bytes }]
+  for (let i = 0; i < pending.length; i++) {
+    const doc = pending[i];
+    setProgress(true, Math.round(i / pending.length * 70));
+    try {
+      doc.status = 'analyzing';
+      renderDocList();
+      log('info', 'Firmando: ' + doc.name);
+      const bytes = await signDoc(doc);
+      signed.push({
+        name: doc.name.replace(/\.pdf$/i, '_firmado.pdf'),
+        bytes
+      });
+      doc.status = 'done';
+      renderDocList();
+      log('ok', '✓ ' + doc.name);
+    } catch(e) {
+      doc.status = 'error';
+      doc.error = e.message;
+      renderDocList();
+      log('err', doc.name + ': ' + e.message);
+      console.error(e);
+    }
+  }
+
+  // Decidir formato de descarga
+  if (signed.length === 0) {
+    log('err', 'Ningún documento se firmó correctamente');
+    setProgress(false);
+  } else {
+    const wantZip = downloadFormat === 'zip' ||
+                    (downloadFormat === 'auto' && signed.length > 1);
+    const wantPdfMulti = downloadFormat === 'pdf' && signed.length > 1;
+
+    if (!wantZip && signed.length === 1) {
+      // PDF único
+      setProgress(true, 95);
+      download(signed[0].bytes, signed[0].name);
+      log('ok', 'Descargado: ' + signed[0].name);
+      setProgress(true, 100);
+      setTimeout(() => setProgress(false), 800);
+    } else if (wantPdfMulti) {
+      // Múltiples PDFs individuales con delay (puede que el navegador pida permiso)
+      setProgress(true, 90);
+      log('info', `Descargando ${signed.length} PDFs (acepta el aviso del navegador si aparece)…`);
+      for (let i = 0; i < signed.length; i++) {
+        download(signed[i].bytes, signed[i].name);
+        if (i < signed.length - 1) await new Promise(r => setTimeout(r, 350));
+      }
+      log('ok', `${signed.length} PDFs descargados`);
+      setProgress(true, 100);
+      setTimeout(() => setProgress(false), 800);
+    } else {
+      // ZIP (multi auto, o ZIP forzado)
+      setProgress(true, 80);
+      log('info', `Empaquetando ${signed.length} documentos en ZIP…`);
+      try {
+        const zip = new JSZip();
+        for (const f of signed) zip.file(f.name, f.bytes);
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+        const zipName = `firmados_${ts}.zip`;
+        downloadBlob(zipBlob, zipName);
+        log('ok', `Descargado: ${zipName} (${signed.length} archivos)`);
+        setProgress(true, 100);
+        setTimeout(() => setProgress(false), 800);
+      } catch(e) {
+        log('err', 'Error generando ZIP: ' + e.message);
+        console.error(e);
+        setProgress(false);
+      }
+    }
+  }
+
+  updateFooter();
+  setButtons(true);
+  updateButtons();
+}
+
+async function signAll() {
+  if (!docs.length) { log('info', 'Añade documentos primero'); return; }
+  docs.forEach(d => {
+    if (d.status === 'done' || d.status === 'error') {
+      d.status = (d.sigFields?.length || d.textMatches?.length) ? 'ready' : 'pending';
+      d.error = null;
+    }
+  });
+  renderDocList();
+  await signSelected();
+}
+
+// ═══════════════════════════════════════════════════════
+// UTIL
+// ═══════════════════════════════════════════════════════
+function sanitize(s) {
+  // Solo ASCII imprimible + Latin-1 supplement (lo que WinAnsi soporta)
+  return String(s).replace(/[^\x20-\x7E\xA0-\xFF]/g,' ').replace(/\s+/g,' ').trim();
+}
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+function escAttr(s) { return escHtml(s); }
+function download(bytes, name) {
+  const url = URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+  const a = Object.assign(document.createElement('a'),{href:url,download:name});
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),5000);
+}
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'),{href:url,download:name});
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),5000);
+}
+function base64ToBuffer(b64) {
+  const bin = atob(b64), buf = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+  return buf.buffer;
+}
+function fmtSize(b) {
+  if (!b) return '—';
+  if (b<1024) return b+'B';
+  if (b<1048576) return (b/1024).toFixed(0)+'KB';
+  return (b/1048576).toFixed(1)+'MB';
+}
+function setProgress(vis, pct) {
+  const bar = document.getElementById('progBar'), fill = document.getElementById('progFill');
+  vis ? bar.classList.add('vis') : bar.classList.remove('vis');
+  if (pct !== undefined) fill.style.width = pct + '%';
+  if (!vis) fill.style.width = '0%';
+}
+function log(type, msg) {
+  const area = document.getElementById('logArea');
+  area.classList.add('vis');
+  const line = document.createElement('div');
+  line.className = type;
+  line.textContent = '[' + new Date().toLocaleTimeString('es-ES') + '] ' + msg;
+  area.appendChild(line);
+  area.scrollTop = area.scrollHeight;
+  while (area.children.length > 25) area.removeChild(area.firstChild);
+}
+function updateButtons() {
+  const ready = docs.some(d => d.status === 'ready' || d.status === 'pending');
+  const any   = docs.length > 0;
+  const hasCert = !!certBytes;
+  document.getElementById('btnSign').disabled  = !ready || !hasCert;
+  document.getElementById('btnBatch').disabled = !any   || !hasCert;
+}
+function setButtons(en) {
+  document.getElementById('btnSign').disabled  = !en;
+  document.getElementById('btnBatch').disabled = !en;
+}
+function updateFooter() {
+  const n = docs.filter(d => d.status === 'done').length;
+  const f = document.getElementById('signedFoot');
+  if (n > 0) {
+    f.style.display = 'block';
+    f.textContent = `Ya firmados: ${n} documento(s)`;
+  } else {
+    f.style.display = 'none';
+  }
+}
+</script>
+</body>
+</html>
