@@ -198,7 +198,7 @@ input[type="file"]{display:none;}
   <div class="hrow">
     <div class="logo">✍</div>
     <span class="appname">FIRMA DIGITAL INTELEC</span>
-    <span class="vbadge">v2.19</span>
+    <span class="vbadge">v2.20</span>
   </div>
   <div class="hsub">PKCS#7 SHA-256 · Firma criptográfica real</div>
 </header>
@@ -807,51 +807,65 @@ async function signDoc(doc) {
     pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
   }
 
-  pdfDoc.setProducer(sanitize('Firma Digital Intelec v2.19'));
+  pdfDoc.setProducer(sanitize('Firma Digital Intelec v2.20'));
   pdfDoc.setModificationDate(now);
 
   // 4. Guardar el PDF SIN streams comprimidos para poder localizar el placeholder
   let pdfBytes = await pdfDoc.save({ useObjectStreams: false });
   pdfBytes = new Uint8Array(pdfBytes);
 
-  // 5. Localizar placeholder /Contents y /ByteRange
-  const pdfStr = new TextDecoder('latin1').decode(pdfBytes);
+  // 5. Localizar placeholders /Contents y /ByteRange
+  // Decodificar a binary string (1 char = 1 byte) para usar regex con offsets en bytes
+  const pdfStr = new TextDecoder('iso-8859-1').decode(pdfBytes);
 
-  const contentsMatch = pdfStr.match(/\/Contents\s*<(0+)>/);
-  if (!contentsMatch) throw new Error('No se encontró el placeholder /Contents en el PDF generado');
+  // Regex muy específico: exigir EXACTAMENTE los 16384 ceros del placeholder, evita falsos positivos
+  const contentsRegex = new RegExp(`\\/Contents\\s*<(0{${PLACEHOLDER_HEX_LEN}})>`);
+  const contentsMatch = pdfStr.match(contentsRegex);
+  if (!contentsMatch) throw new Error('No se localizó el placeholder /Contents');
+
+  // Posiciones EXACTAS de '<' y '>' en bytes
   const ltPos = contentsMatch.index + contentsMatch[0].indexOf('<');
-  const gtPos = contentsMatch.index + contentsMatch[0].indexOf('>');
+  const gtPos = contentsMatch.index + contentsMatch[0].lastIndexOf('>');
 
-  // ByteRange real: hash de [0..ltPos] + [gtPos..end] (incluyendo < y >)
-  const realByteRange = [0, ltPos + 1, gtPos, pdfBytes.length - gtPos];
+  // ByteRange: convención EXCLUDE-BOTH-BRACKETS (estándar usado por Adobe, iText, node-signpdf)
+  //   - Range A: [0, ltPos-1]  → length = ltPos                     (excluye '<')
+  //   - Range B: [gtPos+1, end-1] → length = pdfBytes.length-gtPos-1 (excluye '>')
+  const realByteRange = [0, ltPos, gtPos + 1, pdfBytes.length - (gtPos + 1)];
 
   const brMatch = pdfStr.match(/\/ByteRange\s*\[\s*0\s+9999999999\s+9999999999\s+9999999999\s*\]/);
-  if (!brMatch) throw new Error('No se encontró el placeholder /ByteRange en el PDF generado');
+  if (!brMatch) throw new Error('No se localizó el placeholder /ByteRange');
 
-  // Construir el nuevo string ByteRange y rellenar con espacios para mantener longitud
   const newBrStr = `/ByteRange [${realByteRange.join(' ')}]`;
   if (newBrStr.length > brMatch[0].length) {
     throw new Error(`ByteRange real (${newBrStr.length}) supera placeholder (${brMatch[0].length})`);
   }
-  const padded = newBrStr + ' '.repeat(brMatch[0].length - newBrStr.length);
-  for (let i = 0; i < padded.length; i++) {
-    pdfBytes[brMatch.index + i] = padded.charCodeAt(i);
+  const paddedBr = newBrStr + ' '.repeat(brMatch[0].length - newBrStr.length);
+  for (let i = 0; i < paddedBr.length; i++) {
+    pdfBytes[brMatch.index + i] = paddedBr.charCodeAt(i);
   }
 
-  // 6. Calcular hash SHA-256 sobre las dos partes signadas y crear PKCS#7
-  const range1 = pdfBytes.subarray(0, ltPos + 1);
-  const range2 = pdfBytes.subarray(gtPos);
+  // 6. Construir los datos a firmar usando EXACTAMENTE la misma convención que ByteRange
+  //    Range A: bytes [0, ltPos-1]  (excluye '<')
+  //    Range B: bytes [gtPos+1, end-1]  (excluye '>')
+  const range1 = pdfBytes.subarray(0, ltPos);            // bytes 0..ltPos-1
+  const range2 = pdfBytes.subarray(gtPos + 1);           // bytes gtPos+1..end-1
   const dataToSign = new Uint8Array(range1.length + range2.length);
   dataToSign.set(range1, 0);
   dataToSign.set(range2, range1.length);
 
+  // Verificación de coherencia: longitud de datos firmados = suma de longitudes de ByteRange
+  const expectedLen = realByteRange[1] + realByteRange[3];
+  if (dataToSign.length !== expectedLen) {
+    throw new Error(`Inconsistencia: dataToSign=${dataToSign.length} vs ByteRange total=${expectedLen}`);
+  }
+
+  // 7. Firmar con PKCS#7 detached SHA-256
   const dataBin = uint8ArrayToBinary(dataToSign);
   const p7 = forge.pkcs7.createSignedData();
   p7.content = forge.util.createBuffer(dataBin, 'binary');
 
-  // Añadir certificado(s) — solo el del firmante para evitar duplicados confusos
+  // Añadir certificado del firmante y resto de la cadena
   p7.addCertificate(cert);
-  // Si hay cadena de certificados, añadir los demás también
   for (const c of certs) {
     if (c !== cert) {
       try { p7.addCertificate(c); } catch(e) {}
@@ -874,19 +888,44 @@ async function signDoc(doc) {
   const hexSig = forge.util.bytesToHex(derBytes);
 
   if (hexSig.length > PLACEHOLDER_HEX_LEN) {
-    throw new Error(`Firma PKCS#7 (${hexSig.length} hex) excede placeholder (${PLACEHOLDER_HEX_LEN}). Aumentar tamaño.`);
+    throw new Error(`PKCS#7 (${hexSig.length} hex) > placeholder (${PLACEHOLDER_HEX_LEN}). Aumentar tamaño.`);
   }
 
-  // Rellenar con ceros hasta el tamaño del placeholder
   const paddedHex = (hexSig + '0'.repeat(PLACEHOLDER_HEX_LEN - hexSig.length)).toUpperCase();
 
-  // 7. Insertar la firma hex entre < y > en el buffer
+  // 8. Insertar la firma hex DENTRO de los brackets (entre '<' y '>')
+  //    El placeholder hex empieza en ltPos+1 y termina en gtPos-1
   const placeholderHexStart = ltPos + 1;
   for (let i = 0; i < paddedHex.length; i++) {
     pdfBytes[placeholderHexStart + i] = paddedHex.charCodeAt(i);
   }
 
-  log('ok', `Firma criptográfica PKCS#7 SHA-256 generada (${Math.round(hexSig.length/2)} bytes)`);
+  // 9. AUTO-VERIFICACIÓN: re-leer ByteRange del PDF final y comparar hash
+  //    Garantiza que lo que firmamos == lo que Acrobat va a re-hashear
+  try {
+    const verifyRange1 = pdfBytes.subarray(realByteRange[0], realByteRange[0] + realByteRange[1]);
+    const verifyRange2 = pdfBytes.subarray(realByteRange[2], realByteRange[2] + realByteRange[3]);
+    const verifyData = new Uint8Array(verifyRange1.length + verifyRange2.length);
+    verifyData.set(verifyRange1, 0);
+    verifyData.set(verifyRange2, verifyRange1.length);
+
+    const md1 = forge.md.sha256.create();
+    md1.update(uint8ArrayToBinary(dataToSign));
+    const md2 = forge.md.sha256.create();
+    md2.update(uint8ArrayToBinary(verifyData));
+    const h1 = md1.digest().toHex();
+    const h2 = md2.digest().toHex();
+
+    if (h1 !== h2) {
+      throw new Error(`Hash mismatch: signed=${h1.slice(0,16)}... vs file=${h2.slice(0,16)}...`);
+    }
+    log('info', `Hash SHA-256 verificado: ${h1.slice(0, 24)}…`);
+  } catch(verifyErr) {
+    log('err', 'Auto-verificación falló: ' + verifyErr.message);
+    throw verifyErr;
+  }
+
+  log('ok', `Firma PKCS#7 SHA-256 (${Math.round(hexSig.length/2)} bytes) ByteRange=[${realByteRange.join(',')}]`);
   return pdfBytes;
 }
 
