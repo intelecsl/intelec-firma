@@ -233,9 +233,9 @@ input[type="file"]{display:none;}
   <div class="hrow">
     <div class="logo">✍</div>
     <span class="appname">FIRMA DIGITAL INTELEC</span>
-    <span class="vbadge">v3.02</span>
+    <span class="vbadge">v3.03</span>
   </div>
-  <div class="hsub">PKCS#7 simplificado · Cert match por clave</div>
+  <div class="hsub">PKCS#7 simplificado · Verificación robusta</div>
 </header>
 
 <div class="scroll">
@@ -1292,7 +1292,7 @@ async function signDoc(doc) {
     pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
   }
 
-  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.02'));
+  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.03'));
   pdfDoc.setModificationDate(now);
 
   // 4. Guardar el PDF SIN streams comprimidos para poder localizar el placeholder
@@ -1379,29 +1379,36 @@ async function signDoc(doc) {
   const hexSig = forge.util.bytesToHex(derBytes);
 
   // VERIFICACIÓN: parsear nuestro propio PKCS#7 para confirmar estructura válida.
-  // Si VALIDe falla con "no se puede extraer el cert", algo aquí lo detectaría.
+  // forge guarda los signers parseados como `signerInfos` (no `signers`).
   try {
     const verifyAsn1 = forge.asn1.fromDer(derBytes);
     const parsedP7 = forge.pkcs7.messageFromAsn1(verifyAsn1);
-    const ncerts = (parsedP7.certificates || []).length;
-    const nsigners = (parsedP7.signers || []).length;
-    log('info', `PKCS#7 estructura: ${ncerts} cert(s), ${nsigners} signer(s)`);
-    if (ncerts === 0) {
-      log('err', '⚠ El PKCS#7 no contiene certificados — VALIDe lo rechazará');
-    } else if (nsigners === 0) {
+    const certsP = parsedP7.certificates || [];
+    const signersP = parsedP7.signerInfos || parsedP7.signers || [];
+    log('info', `PKCS#7 estructura: ${certsP.length} cert(s), ${signersP.length} signer(s)`);
+
+    if (certsP.length === 0) {
+      log('err', '⚠ El PKCS#7 no contiene certificados');
+    }
+    if (signersP.length === 0) {
       log('err', '⚠ El PKCS#7 no contiene signers');
-    } else {
-      // Comprobar que el SID del signer apunta a un cert presente
-      const signer = parsedP7.signers[0];
-      const sigSerial = signer.serialNumber || '';
+    }
+    if (certsP.length > 0 && signersP.length > 0) {
+      // Comprobar que el SID del signer apunta a un cert presente.
+      // Los serial numbers en forge se manejan como hex string en minúscula.
+      const signer = signersP[0];
+      const sigSerial = String(signer.serialNumber || signer.sid?.serialNumber || '').toLowerCase().replace(/^0+/, '');
       let matched = false;
-      for (const c of parsedP7.certificates) {
-        if ((c.serialNumber || '') === sigSerial) { matched = true; break; }
+      let certSerialList = [];
+      for (const c of certsP) {
+        const cs = String(c.serialNumber || '').toLowerCase().replace(/^0+/, '');
+        certSerialList.push(cs.slice(0, 12));
+        if (cs && cs === sigSerial) { matched = true; }
       }
       if (matched) {
-        log('ok', '✓ Signer ↔ Cert match por serial number');
+        log('ok', `✓ Signer ↔ Cert match: serial=${sigSerial.slice(0, 16)}…`);
       } else {
-        log('err', '⚠ El signer apunta a un serial que no está en certificates — causa probable del error VALIDe');
+        log('err', `⚠ Signer SID (serial=${sigSerial.slice(0,16)}…) no coincide con certs disponibles [${certSerialList.join(', ')}]`);
       }
     }
   } catch(parseErr) {
