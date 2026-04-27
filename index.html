@@ -129,7 +129,8 @@ header{background:linear-gradient(135deg,#1a2035,#0f1525);
 .detect-box{background:rgba(0,0,0,.2);border:1px solid var(--border);
   border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:4px;}
 .detect-hdr{display:flex;align-items:center;gap:6px;font-size:10px;
-  font-weight:600;text-transform:uppercase;letter-spacing:.7px;margin-bottom:2px;}
+  font-weight:600;text-transform:uppercase;letter-spacing:.7px;margin-bottom:2px;
+  flex-wrap:wrap;}
 .detect-hdr .ico{font-size:12px;}
 .detect-empty{font-size:10px;color:var(--muted);font-style:italic;}
 .field-btn{background:rgba(255,255,255,.04);border:1px solid var(--border);
@@ -232,9 +233,9 @@ input[type="file"]{display:none;}
   <div class="hrow">
     <div class="logo">✍</div>
     <span class="appname">FIRMA DIGITAL INTELEC</span>
-    <span class="vbadge">v3.00</span>
+    <span class="vbadge">v3.01</span>
   </div>
-  <div class="hsub">PKCS#7 SHA-256 · Vista previa · Persistencia</div>
+  <div class="hsub">Detección con scoring · PKCS#7 SHA-256</div>
 </header>
 
 <div class="scroll">
@@ -307,7 +308,19 @@ input[type="file"]{display:none;}
     </div>
 
     <div>
-      <div class="detect-hdr"><span class="ico">📐</span> Posición manual (fallback)</div>
+      <div class="detect-hdr" id="manualHdr">
+        <span class="ico">📐</span> Posición manual (fallback)
+        <span id="manualActiveTag" style="display:none;font-size:9px;font-weight:700;
+          padding:1px 6px;border-radius:8px;background:rgba(62,201,122,.2);
+          color:var(--success);margin-left:6px">ACTIVA ✓</span>
+        <button id="btnUseManual" onclick="useManualCurrent()"
+          style="display:none;margin-left:auto;background:rgba(59,125,233,.15);
+          border:1px solid rgba(59,125,233,.3);color:var(--accent2);
+          font-size:10px;padding:3px 8px;border-radius:5px;cursor:pointer;
+          font-family:var(--font);font-weight:600">
+          Usar manual
+        </button>
+      </div>
       <div class="pos-grid">
         <div class="opt-g">
           <div class="opt-lbl">Posición</div>
@@ -676,45 +689,98 @@ async function detectAcroFields(pdfJs) {
 }
 
 // ═══════════════════════════════════════════════════════
-// DETECCIÓN: Texto "firma" / "signature"
+// DETECCIÓN: Texto con scoring inteligente
+// Patrones de signature reales (alta confianza) vs menciones genéricas (baja)
 // ═══════════════════════════════════════════════════════
-const SIG_KEYWORDS = ['firma', 'firmado', 'firmante', 'firmar', 'signature', 'signed', 'sello'];
+const SIG_PATTERNS_HIGH = [
+  /^firmad[oa]\s+por\b/i,
+  /^firma\s*[:.]?\s*$/i,
+  /^firmad[oa]\s*[:.]?\s*$/i,
+  /^firma\s+y\s+sello/i,
+  /^firma\s+digital/i,
+  /^firma\s+autorizada/i,
+  /^firma\s+del?\s+/i,
+  /^sello\s+y\s+firma/i,
+  /^signed\s+by\b/i,
+  /^signature\s*[:.]?\s*$/i,
+];
+const SIG_PATTERNS_MED = [
+  /\bfirmado\s+por\b/i,
+  /\bfirma\s+autorizada\b/i,
+  /\bfirma\s+digital\b/i,
+  /\bfirma\s+del?\b/i,
+  /\bsello\s+y\s+firma\b/i,
+];
+const SIG_PATTERNS_LOW = [
+  /\bfirma\b/i,
+  /\bfirmar\b/i,
+  /\bsignature\b/i,
+  /\bsigned\b/i,
+];
+
+function scoreSigText(text, pageNum, totalPages, pageHeight, itemY) {
+  const t = (text || '').trim();
+  if (!t || t.length > 60) return 0;
+
+  let score = 0;
+  if (SIG_PATTERNS_HIGH.some(re => re.test(t))) score = 100;
+  else if (SIG_PATTERNS_MED.some(re => re.test(t))) score = 60;
+  else if (SIG_PATTERNS_LOW.some(re => re.test(t))) score = 25;
+  else return 0;
+
+  // Posición: PDF tiene origen abajo-izda, así que Y bajo = parte baja de página
+  const yRatio = itemY / pageHeight; // 0 = abajo, 1 = arriba
+  if (yRatio < 0.25) score += 35;        // bottom 25% → bonus fuerte (típica zona de firma)
+  else if (yRatio < 0.50) score += 15;   // mitad inferior → bonus suave
+  else if (yRatio > 0.85) score -= 30;   // muy arriba → penalización (probable header/título)
+
+  // Bonus por estar en última página (las firmas suelen ir al final)
+  if (pageNum === totalPages) score += 20;
+  // Penalización por estar en primera página de un doc multipágina (excepto si hay solo 1)
+  else if (pageNum === 1 && totalPages > 1) score -= 10;
+
+  // Penalización por texto muy corto (puede ser una abreviatura random)
+  if (t.length < 4) score -= 15;
+  // Bonus por terminar en : o estar solo (es claramente una etiqueta de firma)
+  if (/[:_]\s*$/.test(t) || t.length <= 8) score += 10;
+
+  return score;
+}
 
 async function detectTextMatches(pdfJs) {
-  const matches = [];
+  const all = [];
   for (let p = 1; p <= pdfJs.numPages; p++) {
-    if (matches.length >= 8) break;
     try {
       const page = await pdfJs.getPage(p);
       const content = await page.getTextContent();
       const viewport = page.getViewport({ scale: 1 });
+      const pageHeight = viewport.height;
 
       for (const item of content.items) {
-        const txt = (item.str || '').toLowerCase().trim();
-        if (!txt || txt.length > 60) continue;
-        const hit = SIG_KEYWORDS.find(kw => txt.includes(kw));
-        if (hit) {
-          const tr = item.transform;
-          if (!tr || tr.length < 6) continue;
-          const x = tr[4];
-          const y = tr[5];
-          // PDF usa origen abajo-izda; transform.f ya está en ese sistema
-          const pdfY = y;
-          const w = item.width || 80;
-          const h = item.height || 12;
-          matches.push({
-            page: p,
-            keyword: hit,
-            text: item.str.trim(),
-            // rect en coords PDF (origen abajo-izda)
-            rect: [x, pdfY - 4, x + Math.max(w, 150), pdfY + h + 6],
-          });
-          if (matches.length >= 8) break;
-        }
+        const tr = item.transform;
+        if (!tr || tr.length < 6) continue;
+        const x = tr[4];
+        const y = tr[5];
+
+        const score = scoreSigText(item.str, p, pdfJs.numPages, pageHeight, y);
+        if (score <= 0) continue;
+
+        const w = item.width || 80;
+        const h = item.height || 12;
+        all.push({
+          page: p,
+          score,
+          keyword: 'firma',
+          text: item.str.trim(),
+          rect: [x, y - 4, x + Math.max(w, 150), y + h + 6],
+        });
       }
     } catch(e) { console.warn('detectTextMatches p.' + p, e); }
   }
-  return matches;
+
+  // Ordenar por score descendente, quedarse con las 8 mejores
+  all.sort((a, b) => b.score - a.score);
+  return all.slice(0, 8);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -785,10 +851,38 @@ function renderCfg(doc) {
   renderFieldBox('boxAcro', doc.sigFields, 'acro', doc.id,
     f => `${escHtml(f.name)} · p.${f.page}`);
   renderFieldBox('boxText', doc.textMatches, 'text', doc.id,
-    f => `"${escHtml(f.text)}" · p.${f.page}`);
+    f => `"${escHtml(f.text)}" · p.${f.page}${f.score ? ` <span style="opacity:.6">(${f.score})</span>` : ''}`);
+
+  // Indicador "manual" activo: añadir clase visual a la sección manual
+  const sel = fieldSel[doc.id];
+  const isManual = !sel || sel.type === 'manual';
+  const manualHdr = document.getElementById('manualHdr');
+  if (manualHdr) {
+    manualHdr.style.color = isManual ? 'var(--success)' : 'var(--muted)';
+    const tag = document.getElementById('manualActiveTag');
+    if (tag) tag.style.display = isManual ? 'inline-block' : 'none';
+  }
+  const useManualBtn = document.getElementById('btnUseManual');
+  if (useManualBtn) {
+    useManualBtn.style.display = isManual ? 'none' : 'block';
+  }
 
   renderPreview(doc);
   updateButtons();
+}
+
+// Forzar uso de posición manual (deselecciona detección)
+function useManual(docId) {
+  fieldSel[docId] = { type: 'manual' };
+  const doc = docs.find(d => d.id === docId);
+  if (doc) {
+    if (doc.status === 'pending') doc.status = 'ready';
+    renderDocList();
+    renderCfg(doc);
+  }
+}
+function useManualCurrent() {
+  if (currentDocId) useManual(currentDocId);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1177,7 +1271,7 @@ async function signDoc(doc) {
     pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
   }
 
-  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.00'));
+  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.01'));
   pdfDoc.setModificationDate(now);
 
   // 4. Guardar el PDF SIN streams comprimidos para poder localizar el placeholder
@@ -1229,10 +1323,17 @@ async function signDoc(doc) {
     throw new Error(`Inconsistencia: dataToSign=${dataToSign.length} vs ByteRange total=${expectedLen}`);
   }
 
+  // Pre-cálculo del SHA-256 para diagnóstico (lo que Adobe DEBE re-hashear y validar)
+  const preMd = forge.md.sha256.create();
+  preMd.update(uint8ArrayToBinary(dataToSign));
+  const preHashHex = preMd.digest().toHex();
+  log('info', `Pre-firma SHA-256: ${preHashHex.slice(0, 32)}…`);
+  log('info', `ByteRange=[${realByteRange.join(',')}] · ltPos=${ltPos} · gtPos=${gtPos} · total=${pdfBytes.length}`);
+
   // 7. Firmar con PKCS#7 detached SHA-256
-  const dataBin = uint8ArrayToBinary(dataToSign);
+  // Pasar el Uint8Array DIRECTAMENTE a forge (más fiable que vía binary string)
   const p7 = forge.pkcs7.createSignedData();
-  p7.content = forge.util.createBuffer(dataBin, 'binary');
+  p7.content = forge.util.createBuffer(dataToSign);
 
   // Añadir certificado del firmante y resto de la cadena
   p7.addCertificate(cert);
@@ -1279,17 +1380,14 @@ async function signDoc(doc) {
     verifyData.set(verifyRange1, 0);
     verifyData.set(verifyRange2, verifyRange1.length);
 
-    const md1 = forge.md.sha256.create();
-    md1.update(uint8ArrayToBinary(dataToSign));
     const md2 = forge.md.sha256.create();
     md2.update(uint8ArrayToBinary(verifyData));
-    const h1 = md1.digest().toHex();
-    const h2 = md2.digest().toHex();
+    const postHashHex = md2.digest().toHex();
 
-    if (h1 !== h2) {
-      throw new Error(`Hash mismatch: signed=${h1.slice(0,16)}... vs file=${h2.slice(0,16)}...`);
+    if (preHashHex !== postHashHex) {
+      throw new Error(`Hash mismatch: signed=${preHashHex.slice(0,16)}... vs file=${postHashHex.slice(0,16)}...`);
     }
-    log('info', `Hash SHA-256 verificado: ${h1.slice(0, 24)}…`);
+    log('ok', `Hash post-firma OK: ${postHashHex.slice(0, 32)}…`);
   } catch(verifyErr) {
     log('err', 'Auto-verificación falló: ' + verifyErr.message);
     throw verifyErr;
