@@ -1,15 +1,15 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
-  "manifestVersion": "1.17",
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.24/MicrosoftTeams.schema.json",
   "id": "45296c6e-05b2-45fe-b01d-9173d54288a7",
-  "version": "3.0.5",
+  "manifestVersion": "1.24",
+  "version": "3.0.6",
   "name": {
     "short": "Firma Digital",
     "full": "Firma Digital Intelec"
   },
   "description": {
-    "short": "Firma criptografica PKCS7 de PDFs adjuntos.",
-    "full": "Aplica firma digital criptografica PKCS7 SHA-256 a PDFs adjuntos en correo Outlook con deteccion automatica de campos AcroForm, vista previa interactiva con click-to-place, y persistencia del certificado en el navegador."
+    "short": "Firma criptografica PKCS7 SHA-256 de PDFs adjuntos.",
+    "full": "Aplica firma digital criptografica PKCS7 SHA-256 a PDFs adjuntos en correo Outlook, con deteccion automatica de campos AcroForm, vista previa interactiva con click-to-place y persistencia del certificado."
   },
   "developer": {
     "name": "Intelec S.L.",
@@ -18,12 +18,13 @@
     "termsOfUseUrl": "https://intelecsl.github.io/intelec-firma/"
   },
   "icons": {
-    "color": "color.png",
-    "outline": "outline.png"
+    "outline": "assets/outline.png",
+    "color": "assets/color.png"
   },
   "accentColor": "#e8f03a",
   "localizationInfo": {
-    "defaultLanguageTag": "es-ES"
+    "defaultLanguageTag": "es-es",
+    "additionalLanguages": []
   },
   "authorization": {
     "permissions": {
@@ -41,71 +42,16 @@
   "extensions": [
     {
       "requirements": {
-        "scopes": [
-          "mail"
-        ],
-        "capabilities": [
-          {
-            "name": "Mailbox",
-            "minVersion": "1.5"
-          }
-        ]
+        "scopes": [ "mail" ]
       },
-      "ribbons": [
-        {
-          "contexts": [
-            "mailRead"
-          ],
-          "tabs": [
-            {
-              "builtInTabId": "TabDefault",
-              "groups": [
-                {
-                  "id": "firmaIntelecGroup",
-                  "label": "Intelec",
-                  "controls": [
-                    {
-                      "id": "firmaIntelecButton",
-                      "type": "button",
-                      "label": "Firma Digital",
-                      "icons": [
-                        {
-                          "size": 16,
-                          "file": "icon-16.png"
-                        },
-                        {
-                          "size": 32,
-                          "file": "icon-32.png"
-                        },
-                        {
-                          "size": 80,
-                          "file": "icon-80.png"
-                        }
-                      ],
-                      "supertip": {
-                        "title": "Firma Digital Intelec",
-                        "description": "Firma criptografica PKCS7 de PDFs adjuntos."
-                      },
-                      "actionId": "openFirmaTaskpane"
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ],
       "runtimes": [
         {
           "requirements": {
             "capabilities": [
-              {
-                "name": "Mailbox",
-                "minVersion": "1.5"
-              }
+              { "name": "Mailbox", "minVersion": "1.5" }
             ]
           },
-          "id": "TaskPaneRuntime",
+          "id": "TaskPaneRuntimeMail",
           "type": "general",
           "code": {
             "page": "https://intelecsl.github.io/intelec-firma/index.html"
@@ -113,10 +59,52 @@
           "lifetime": "short",
           "actions": [
             {
-              "id": "openFirmaTaskpane",
+              "id": "TaskPaneRuntimeShowMail",
               "type": "openPage",
-              "pinnable": true,
-              "view": "firmaTaskpane"
+              "pinnable": true
+            }
+          ]
+        }
+      ],
+      "ribbons": [
+        {
+          "requirements": {
+            "capabilities": [
+              { "name": "Mailbox", "minVersion": "1.5" }
+            ]
+          },
+          "contexts": [ "mailRead" ],
+          "tabs": [
+            {
+              "builtInTabId": "TabDefault",
+              "groups": [
+                {
+                  "id": "firmaIntelecGroup",
+                  "label": "Firma Digital",
+                  "icons": [
+                    { "size": 16, "url": "https://intelecsl.github.io/intelec-firma/assets/icon-16.png" },
+                    { "size": 32, "url": "https://intelecsl.github.io/intelec-firma/assets/icon-32.png" },
+                    { "size": 80, "url": "https://intelecsl.github.io/intelec-firma/assets/icon-80.png" }
+                  ],
+                  "controls": [
+                    {
+                      "id": "firmaIntelecButton",
+                      "type": "button",
+                      "label": "Firma Digital",
+                      "icons": [
+                        { "size": 16, "url": "https://intelecsl.github.io/intelec-firma/assets/icon-16.png" },
+                        { "size": 32, "url": "https://intelecsl.github.io/intelec-firma/assets/icon-32.png" },
+                        { "size": 80, "url": "https://intelecsl.github.io/intelec-firma/assets/icon-80.png" }
+                      ],
+                      "supertip": {
+                        "title": "Firma Digital Intelec",
+                        "description": "Firma criptografica PKCS7 de PDFs adjuntos."
+                      },
+                      "actionId": "TaskPaneRuntimeShowMail"
+                    }
+                  ]
+                }
+              ]
             }
           ]
         }
