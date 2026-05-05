@@ -288,7 +288,7 @@ input[type="file"]{display:none;}
       <div class="appname">Firma Digital</div>
       <div class="hsub-inline">PKCS#7 SHA-256 · Click-to-place</div>
     </div>
-    <span class="vbadge">v3.04</span>
+    <span class="vbadge">v3.05</span>
   </div>
 </header>
 
@@ -1464,7 +1464,7 @@ async function signDoc(doc) {
     pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
   }
 
-  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.04'));
+  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.05'));
   pdfDoc.setModificationDate(now);
 
   // 4. Guardar el PDF SIN streams comprimidos para poder localizar el placeholder

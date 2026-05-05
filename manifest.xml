@@ -6,28 +6,25 @@
     xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
     xsi:type="MailApp">
 
-  <!-- Identificador único de la aplicación. NO cambiar (rompe instalaciones existentes). -->
-  <Id>9b5a0e2f-3c7a-4d8e-9b1f-firma3digital04</Id>
+  <!-- GUID único de la aplicación. NO cambiar (rompe instalaciones existentes). -->
+  <Id>45296c6e-05b2-45fe-b01d-9173d54288a7</Id>
 
-  <!-- Versión del manifest. Incrementar a cada release para forzar actualización. -->
-  <Version>3.0.4.0</Version>
+  <!-- Incrementar Version a cada release para forzar actualización en cliente. -->
+  <Version>3.0.5.0</Version>
 
   <ProviderName>Intelec S.L.</ProviderName>
   <DefaultLocale>es-ES</DefaultLocale>
 
   <DisplayName DefaultValue="Firma Digital"/>
-  <Description DefaultValue="Aplica firma digital criptográfica PKCS#7 SHA-256 a PDFs adjuntos en correo Outlook con detección automática de campos y vista previa interactiva."/>
+  <Description DefaultValue="Firma criptografica PKCS7 SHA-256 de PDFs adjuntos en Outlook."/>
 
-  <!-- Iconos en distintas resoluciones. Outlook elegirá el adecuado. -->
   <IconUrl DefaultValue="https://intelecsl.github.io/intelec-firma/icons/icon-64.png"/>
   <HighResolutionIconUrl DefaultValue="https://intelecsl.github.io/intelec-firma/icons/icon-128.png"/>
 
-  <!-- URL desde la que se actualizará el manifest automáticamente. -->
   <SupportUrl DefaultValue="https://intelecsl.github.io/intelec-firma/"/>
+
   <AppDomains>
     <AppDomain>https://intelecsl.github.io</AppDomain>
-    <AppDomain>https://cdnjs.cloudflare.com</AppDomain>
-    <AppDomain>https://appsforoffice.microsoft.com</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -57,10 +54,9 @@
 
   <DisableEntityHighlighting>false</DisableEntityHighlighting>
 
-  <!-- Overrides v1.1: añade botón en la cinta del Outlook moderno -->
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Requirements>
-      <bt:Sets DefaultMinVersion="1.3">
+      <bt:Sets DefaultMinVersion="1.5">
         <bt:Set Name="Mailbox"/>
       </bt:Sets>
     </Requirements>
@@ -113,7 +109,7 @@
         <bt:String id="ButtonTitle" DefaultValue="Firma Digital Intelec"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="ButtonDescription" DefaultValue="Firma criptográfica PKCS#7 de PDFs adjuntos."/>
+        <bt:String id="ButtonDescription" DefaultValue="Firma criptografica PKCS7 de PDFs adjuntos."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

@@ -1,8 +1,8 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
   "manifestVersion": "1.17",
-  "id": "9b5a0e2f-3c7a-4d8e-9b1f-firma3digital04",
-  "version": "3.0.4",
+  "id": "45296c6e-05b2-45fe-b01d-9173d54288a7",
+  "version": "3.0.5",
   "name": {
     "short": "Firma Digital",
     "full": "Firma Digital Intelec"
@@ -22,7 +22,9 @@
     "outline": "outline.png"
   },
   "accentColor": "#e8f03a",
-  "validDomains": [],
+  "localizationInfo": {
+    "defaultLanguageTag": "es-ES"
+  },
   "authorization": {
     "permissions": {
       "resourceSpecific": [
@@ -33,17 +35,27 @@
       ]
     }
   },
+  "validDomains": [
+    "intelecsl.github.io"
+  ],
   "extensions": [
     {
       "requirements": {
-        "scopes": ["mail"],
+        "scopes": [
+          "mail"
+        ],
         "capabilities": [
-          { "name": "Mailbox", "minVersion": "1.5" }
+          {
+            "name": "Mailbox",
+            "minVersion": "1.5"
+          }
         ]
       },
       "ribbons": [
         {
-          "contexts": ["mailRead"],
+          "contexts": [
+            "mailRead"
+          ],
           "tabs": [
             {
               "builtInTabId": "TabDefault",
@@ -57,9 +69,18 @@
                       "type": "button",
                       "label": "Firma Digital",
                       "icons": [
-                        { "size": 16, "url": "https://intelecsl.github.io/intelec-firma/icons/icon-16.png" },
-                        { "size": 32, "url": "https://intelecsl.github.io/intelec-firma/icons/icon-32.png" },
-                        { "size": 80, "url": "https://intelecsl.github.io/intelec-firma/icons/icon-80.png" }
+                        {
+                          "size": 16,
+                          "file": "icon-16.png"
+                        },
+                        {
+                          "size": 32,
+                          "file": "icon-32.png"
+                        },
+                        {
+                          "size": 80,
+                          "file": "icon-80.png"
+                        }
                       ],
                       "supertip": {
                         "title": "Firma Digital Intelec",
@@ -78,7 +99,10 @@
         {
           "requirements": {
             "capabilities": [
-              { "name": "Mailbox", "minVersion": "1.5" }
+              {
+                "name": "Mailbox",
+                "minVersion": "1.5"
+              }
             ]
           },
           "id": "TaskPaneRuntime",

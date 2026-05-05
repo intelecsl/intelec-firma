@@ -36,29 +36,45 @@ Add-in de Outlook para aplicar firma criptográfica PKCS#7 SHA-256 a PDFs adjunt
 
 ## Instalación en Outlook
 
-### Outlook clásico
-- Outlook Web → ⚙ Configuración → Ver toda la configuración → Correo → Personalizar acciones → Obtener complementos → **Mis complementos** → Agregar complemento personalizado → **Agregar desde URL**
-- URL: `https://intelecsl.github.io/intelec-firma/manifest.xml`
+### Vía Centro de Administración Microsoft 365 (recomendado)
 
-### Nuevo Outlook / Teams
-- Subir `manifest.json` empaquetado en ZIP junto con `icon-128.png` e `icon-32.png` desde la raíz
-- Centro de administración Microsoft 365 → Aplicaciones integradas → Cargar aplicación personalizada
+⚠ **Subir el archivo `manifest.xml` directamente, NO un ZIP** (el ZIP solo se usa con manifest unificado JSON, que aún tiene soporte limitado).
+
+1. https://admin.microsoft.com → Configuración → **Aplicaciones integradas**
+2. Click en **Cargar aplicaciones personalizadas** → seleccionar **Office Add-in**
+3. **Cargar archivo de manifiesto (.xml)** → elegir `manifest.xml`
+4. Asignar a usuarios y desplegar
+
+### Vía URL del manifest
+
+Mismo procedimiento pero seleccionar **Proporcionar URL del manifiesto** y pegar:
+
+`https://intelecsl.github.io/intelec-firma/manifest.xml`
+
+### Side-load para test individual
+
+- Outlook Web → ⚙ → Personalizar acciones → Obtener complementos → Mis complementos → Agregar desde URL
+- URL: `https://intelecsl.github.io/intelec-firma/manifest.xml`
 
 ## Actualizar la app
 
 Cada vez que se modifique el código:
 
-1. **Subir versión** en TRES sitios (todos deben coincidir):
+1. **Subir versión** en CUATRO sitios (todos deben coincidir):
    - `index.html` → badge `<span class="vbadge">vX.YZ</span>`
    - `index.html` → `pdfDoc.setProducer('Firma Digital Intelec vX.YZ')`
-   - `manifest.xml` → `<Version>X.Y.Z.0</Version>`
+   - `manifest.xml` → `<Version>X.Y.Z.0</Version>` (formato estricto x.y.z.w)
    - `manifest.json` → `"version": "X.Y.Z"`
 
 2. **Push al repo** — GitHub Pages refresca en 1-2 minutos
-3. Outlook detectará el cambio automáticamente la próxima vez que el usuario abra el add-in (compara el `Version` del manifest con el local)
 
-> **Nota:** si se cambia el `<Id>` del manifest, Outlook lo trata como una app nueva. Mantenerlo siempre igual: `9b5a0e2f-3c7a-4d8e-9b1f-firma3digital04`
+3. **Re-subir el manifest.xml en Centro Admin M365**:
+   - Ir a Aplicaciones integradas → "Firma Digital" → **Editar app** → Actualizar archivo
+   - Subir el `manifest.xml` actualizado (Centro detecta el nuevo `<Version>` y propaga el cambio)
+   - El cliente de Outlook detecta el cambio en 1-24h (la web es más rápida)
+
+> **Nota:** si se cambia el `<Id>` del manifest, Outlook lo trata como una app nueva. Mantenerlo siempre igual: `45296c6e-05b2-45fe-b01d-9173d54288a7`
 
 ## Versión actual
 
-**v3.04** — Estética IBM Plex (estilo Rellena Formularios) + click-to-place en vista previa + manifest configurado para auto-actualización.
+**v3.05** — Estética IBM Plex (estilo Rellena Formularios) + click-to-place en vista previa + manifest configurado para auto-actualización con GUID válido.
