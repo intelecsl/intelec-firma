@@ -1,34 +1,38 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
   "manifestVersion": "1.17",
-  "version": "1.0.0",
-  "id": "625236d9-24ba-438b-9996-e841daa5eaa4",
-  "developer": {
-    "name": "Intelec Spain",
-    "websiteUrl": "https://www.intelecsl.com",
-    "privacyUrl": "https://www.intelecsl.com/privacidad",
-    "termsOfUseUrl": "https://www.intelecsl.com/terminos"
-  },
+  "id": "9b5a0e2f-3c7a-4d8e-9b1f-firma3digital04",
+  "version": "3.0.4",
   "name": {
     "short": "Firma Digital",
     "full": "Firma Digital Intelec"
   },
   "description": {
-    "short": "Firma PDFs con certificado digital",
-    "full": "Firma documentos PDF adjuntos con tu certificado digital (.p12/.pfx) desde Outlook."
+    "short": "Firma criptográfica PKCS#7 de PDFs adjuntos.",
+    "full": "Aplica firma digital criptográfica PKCS#7 SHA-256 a PDFs adjuntos en correo Outlook con detección automática de campos AcroForm, vista previa interactiva con click-to-place, y persistencia del certificado en el navegador."
+  },
+  "developer": {
+    "name": "Intelec S.L.",
+    "websiteUrl": "https://intelecsl.github.io/intelec-firma/",
+    "privacyUrl": "https://intelecsl.github.io/intelec-firma/",
+    "termsOfUseUrl": "https://intelecsl.github.io/intelec-firma/"
   },
   "icons": {
-    "color": "color.png",
-    "outline": "outline.png"
+    "color": "icons/icon-128.png",
+    "outline": "icons/icon-32.png"
   },
-  "accentColor": "#004E98",
+  "accentColor": "#e8f03a",
   "validDomains": [
-    "intelecsl.github.io"
+    "intelecsl.github.io",
+    "cdnjs.cloudflare.com"
   ],
   "authorization": {
     "permissions": {
       "resourceSpecific": [
-        { "name": "MailboxItem.Read.User", "type": "Delegated" }
+        {
+          "name": "MailboxItem.Read.User",
+          "type": "Delegated"
+        }
       ]
     }
   },
@@ -36,56 +40,85 @@
     {
       "requirements": {
         "scopes": ["mail"],
-        "capabilities": [{ "name": "Mailbox", "minVersion": "1.3" }]
+        "capabilities": [
+          { "name": "Mailbox", "minVersion": "1.5" }
+        ]
       },
-      "runtimes": [
-        {
-          "requirements": { "capabilities": [{ "name": "Mailbox", "minVersion": "1.3" }] },
-          "id": "TaskPaneRuntime",
-          "type": "general",
-          "code": { "page": "https://intelecsl.github.io/intelec-firma/index.html" },
-          "lifetime": "short",
-          "actions": [
-            { "id": "ShowTaskPane", "type": "openPage", "view": "homepage" }
-          ]
-        }
-      ],
       "ribbons": [
         {
-          "contexts": ["mailRead", "mailCompose"],
+          "contexts": ["mailRead"],
           "tabs": [
             {
               "builtInTabId": "TabDefault",
               "groups": [
                 {
-                  "id": "msgGroup",
-                  "label": "Firma Digital",
-                  "icons": [
-                    { "size": 16, "url": "https://intelecsl.github.io/intelec-firma/icon-16.png" },
-                    { "size": 32, "url": "https://intelecsl.github.io/intelec-firma/icon-32.png" },
-                    { "size": 80, "url": "https://intelecsl.github.io/intelec-firma/icon-64.png" }
-                  ],
+                  "id": "firmaIntelecGroup",
+                  "label": "Intelec",
                   "controls": [
                     {
-                      "id": "msgOpenPaneBtn",
+                      "id": "firmaIntelecButton",
                       "type": "button",
-                      "label": "Firmar PDF",
+                      "label": "Firma Digital",
                       "icons": [
-                        { "size": 16, "url": "https://intelecsl.github.io/intelec-firma/icon-16.png" },
-                        { "size": 32, "url": "https://intelecsl.github.io/intelec-firma/icon-32.png" },
-                        { "size": 80, "url": "https://intelecsl.github.io/intelec-firma/icon-64.png" }
+                        { "size": 16, "url": "icons/icon-16.png" },
+                        { "size": 32, "url": "icons/icon-32.png" },
+                        { "size": 80, "url": "icons/icon-80.png" }
                       ],
                       "supertip": {
                         "title": "Firma Digital Intelec",
-                        "description": "Firma PDFs adjuntos con tu certificado digital."
+                        "description": "Firma criptográfica PKCS#7 de PDFs adjuntos."
                       },
-                      "actionId": "ShowTaskPane"
+                      "actionId": "openFirmaTaskpane"
                     }
                   ]
                 }
               ]
             }
           ]
+        }
+      ],
+      "actions": [
+        {
+          "id": "openFirmaTaskpane",
+          "type": "openPage",
+          "view": "firmaTaskpane"
+        }
+      ],
+      "runtimes": [
+        {
+          "requirements": {
+            "capabilities": [
+              { "name": "Mailbox", "minVersion": "1.5" }
+            ]
+          },
+          "id": "TaskPaneRuntime",
+          "type": "general",
+          "code": {
+            "page": "https://intelecsl.github.io/intelec-firma/index.html"
+          },
+          "lifetime": "short",
+          "actions": [
+            {
+              "id": "openFirmaTaskpane",
+              "type": "openPage",
+              "pinnable": true,
+              "view": "firmaTaskpane"
+            }
+          ]
+        }
+      ],
+      "alternates": [
+        {
+          "alternateIcons": {
+            "icon": {
+              "size": 64,
+              "url": "https://intelecsl.github.io/intelec-firma/icons/icon-64.png"
+            },
+            "highResolutionIcon": {
+              "size": 128,
+              "url": "https://intelecsl.github.io/intelec-firma/icons/icon-128.png"
+            }
+          }
         }
       ]
     }
