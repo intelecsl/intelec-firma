@@ -8,8 +8,8 @@
     "full": "Firma Digital Intelec"
   },
   "description": {
-    "short": "Firma criptográfica PKCS#7 de PDFs adjuntos.",
-    "full": "Aplica firma digital criptográfica PKCS#7 SHA-256 a PDFs adjuntos en correo Outlook con detección automática de campos AcroForm, vista previa interactiva con click-to-place, y persistencia del certificado en el navegador."
+    "short": "Firma criptografica PKCS7 de PDFs adjuntos.",
+    "full": "Aplica firma digital criptografica PKCS7 SHA-256 a PDFs adjuntos en correo Outlook con deteccion automatica de campos AcroForm, vista previa interactiva con click-to-place, y persistencia del certificado en el navegador."
   },
   "developer": {
     "name": "Intelec S.L.",
@@ -18,14 +18,11 @@
     "termsOfUseUrl": "https://intelecsl.github.io/intelec-firma/"
   },
   "icons": {
-    "color": "icons/icon-128.png",
-    "outline": "icons/icon-32.png"
+    "color": "color.png",
+    "outline": "outline.png"
   },
   "accentColor": "#e8f03a",
-  "validDomains": [
-    "intelecsl.github.io",
-    "cdnjs.cloudflare.com"
-  ],
+  "validDomains": [],
   "authorization": {
     "permissions": {
       "resourceSpecific": [
@@ -60,13 +57,13 @@
                       "type": "button",
                       "label": "Firma Digital",
                       "icons": [
-                        { "size": 16, "url": "icons/icon-16.png" },
-                        { "size": 32, "url": "icons/icon-32.png" },
-                        { "size": 80, "url": "icons/icon-80.png" }
+                        { "size": 16, "url": "https://intelecsl.github.io/intelec-firma/icons/icon-16.png" },
+                        { "size": 32, "url": "https://intelecsl.github.io/intelec-firma/icons/icon-32.png" },
+                        { "size": 80, "url": "https://intelecsl.github.io/intelec-firma/icons/icon-80.png" }
                       ],
                       "supertip": {
                         "title": "Firma Digital Intelec",
-                        "description": "Firma criptográfica PKCS#7 de PDFs adjuntos."
+                        "description": "Firma criptografica PKCS7 de PDFs adjuntos."
                       },
                       "actionId": "openFirmaTaskpane"
                     }
@@ -75,13 +72,6 @@
               ]
             }
           ]
-        }
-      ],
-      "actions": [
-        {
-          "id": "openFirmaTaskpane",
-          "type": "openPage",
-          "view": "firmaTaskpane"
         }
       ],
       "runtimes": [
@@ -105,20 +95,6 @@
               "view": "firmaTaskpane"
             }
           ]
-        }
-      ],
-      "alternates": [
-        {
-          "alternateIcons": {
-            "icon": {
-              "size": 64,
-              "url": "https://intelecsl.github.io/intelec-firma/icons/icon-64.png"
-            },
-            "highResolutionIcon": {
-              "size": 128,
-              "url": "https://intelecsl.github.io/intelec-firma/icons/icon-128.png"
-            }
-          }
         }
       ]
     }
