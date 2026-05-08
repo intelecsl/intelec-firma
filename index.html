@@ -311,9 +311,9 @@ input[type="file"]{display:none;}
   <div class="hdr-divider"></div>
   <div class="htx">
     <div class="appname">Firma Digital</div>
-    <div class="hsub-inline">PKCS#7 SHA-256 · Click-to-place</div>
+    <div class="hsub-inline">PKCS#7 SHA-256 · Firma multipágina</div>
   </div>
-  <span class="vbadge">v3.06</span>
+  <span class="vbadge">v3.07</span>
 </header>
 
 <div class="scroll">
@@ -416,11 +416,17 @@ input[type="file"]{display:none;}
         </div>
         <div class="opt-g">
           <div class="opt-lbl">Página</div>
-          <select class="opt-sel" id="sigPage">
+          <select class="opt-sel" id="sigPage" onchange="onSigPageChange()">
             <option value="last">Última</option>
             <option value="first">Primera</option>
             <option value="all">Todas</option>
+            <option value="custom">Rango…</option>
           </select>
+        </div>
+        <div class="opt-g opt-full" id="sigRangeWrap" style="display:none;">
+          <div class="opt-lbl">Rango de páginas (ej. 1-3,5,7-10)</div>
+          <input type="text" class="opt-in" id="sigRange" placeholder="1-3,5,7-10"
+            oninput="onSigRangeChange()">
         </div>
         <div class="opt-g opt-full">
           <div class="opt-lbl">Texto de firma (opcional)</div>
@@ -907,9 +913,11 @@ function renderDocList() {
     const active = doc.id === currentDocId ? 'active' : '';
     const acroN = doc.sigFields?.length ?? 0;
     const textN = doc.textMatches?.length ?? 0;
+    const cpN   = (customPos[doc.id] || []).length;
     let meta;
     if (doc.status === 'error') meta = doc.error || 'Error';
     else if (doc.status === 'analyzing') meta = 'Analizando…';
+    else if (cpN > 0) meta = `${fmtSize(doc.size)} · 🖋 ×${cpN} click(s)`;
     else meta = `${fmtSize(doc.size)} · ${acroN} AcroForm · ${textN} texto`;
 
     return `<div class="doc-item s-${doc.status} ${active}" onclick="selectDoc('${doc.id}')">
@@ -974,7 +982,37 @@ function useManualCurrent() {
 // PREVIEW: render del PDF + rectángulo de la firma
 // ═══════════════════════════════════════════════════════
 let previewToken = 0; // para cancelar renders obsoletos
-const customPos = {};  // { docId: { page, x, y, w, h } } posiciones puestas con click
+const customPos = {};  // { docId: [{page, x, y, w, h}, …] } posiciones puestas con click
+
+// ── Parser de rango "1-3,5,7-10" → [1,2,3,5,7,8,9,10] (1-based, ordenado, sin dups)
+function parsePageRange(text, totalPages) {
+  if (!text) return [];
+  const out = new Set();
+  const parts = String(text).split(',').map(s => s.trim()).filter(Boolean);
+  for (const p of parts) {
+    const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      const a = Math.max(1, parseInt(m[1], 10));
+      const b = Math.min(totalPages || 99999, parseInt(m[2], 10));
+      if (b >= a) for (let i = a; i <= b; i++) out.add(i);
+    } else {
+      const n = parseInt(p, 10);
+      if (n >= 1 && n <= (totalPages || 99999)) out.add(n);
+    }
+  }
+  return Array.from(out).sort((a, b) => a - b);
+}
+
+function onSigPageChange() {
+  const v = document.getElementById('sigPage').value;
+  document.getElementById('sigRangeWrap').style.display = v === 'custom' ? '' : 'none';
+  const doc = docs.find(d => d.id === currentDocId);
+  if (doc) renderPreview(doc);
+}
+function onSigRangeChange() {
+  const doc = docs.find(d => d.id === currentDocId);
+  if (doc) renderPreview(doc);
+}
 
 async function renderPreview(doc) {
   const wrap = document.getElementById('previewWrap');
@@ -987,39 +1025,53 @@ async function renderPreview(doc) {
   }
 
   const sel = fieldSel[doc.id] || { type: 'manual' };
-  const sigPos  = document.getElementById('sigPos').value;
-  const sigPage = document.getElementById('sigPage').value;
+  const sigPos   = document.getElementById('sigPos').value;
+  const sigPage  = document.getElementById('sigPage').value;
+  const sigRange = document.getElementById('sigRange')?.value || '';
 
-  // Determinar página + rectángulo de la firma en coordenadas PDF
+  // Posiciones custom (array). Inicializar si no existe.
+  const cpArr = customPos[doc.id] || [];
+
+  // Determinar página visible y rectángulo "auto" (si aplica)
   let pageNum = 1;
-  let sigRect = null;       // [x, y, w, h] en coords PDF (origen abajo-izquierda)
-  let pageDims = null;      // {w, h}
+  let autoRect = null;        // [x, y, w, h] en coords PDF
+  let pageDims = null;
 
-  // Si hay posición custom (click-to-place), usarla siempre
-  const cp = customPos[doc.id];
-  if (cp && sel.type === 'manual') {
-    pageNum = cp.page;
-    sigRect = [cp.x, cp.y, cp.w, cp.h];
-  } else if (sel.type === 'acro' && doc.sigFields[sel.idx]) {
+  if (sel.type === 'acro' && doc.sigFields[sel.idx]) {
     const f = doc.sigFields[sel.idx];
     pageNum = f.page;
     const [x1, y1, x2, y2] = f.rect;
     const w = Math.max(Math.abs(x2 - x1), 100);
     const h = Math.max(Math.abs(y2 - y1), 28);
-    sigRect = [Math.min(x1, x2), Math.min(y1, y2), w, h];
+    autoRect = [Math.min(x1, x2), Math.min(y1, y2), w, h];
   } else if (sel.type === 'text' && doc.textMatches[sel.idx]) {
     const m = doc.textMatches[sel.idx];
     pageNum = m.page;
     const [x1, y1, x2, y2] = m.rect;
     const x = Math.min(x1, x2);
     const y = Math.max(0, Math.min(y1, y2) - 32 - 4);
-    sigRect = [x, y, 185, 32];
+    autoRect = [x, y, 185, 32];
   } else {
+    // Modo manual: la página visible se decide así:
+    // 1) override de los botones ‹ ›
+    // 2) si hay clicks en alguna página, esa página
+    // 3) según selector
     if (previewPageOverride) {
       pageNum = previewPageOverride;
-    } else if (sigPage === 'first') pageNum = 1;
-    else if (sigPage === 'last') pageNum = doc.totalPages || 1;
-    else pageNum = 1;
+    } else if (cpArr.length > 0) {
+      pageNum = cpArr[cpArr.length - 1].page;
+    } else if (sigPage === 'first') {
+      pageNum = 1;
+    } else if (sigPage === 'last') {
+      pageNum = doc.totalPages || 1;
+    } else if (sigPage === 'all') {
+      pageNum = 1;  // mostramos la primera, pero se aplicará a todas
+    } else if (sigPage === 'custom') {
+      const range = parsePageRange(sigRange, doc.totalPages || 1);
+      pageNum = range[0] || 1;
+    } else {
+      pageNum = 1;
+    }
   }
 
   try {
@@ -1030,14 +1082,15 @@ async function renderPreview(doc) {
     const baseViewport = page.getViewport({ scale: 1 });
     pageDims = { w: baseViewport.width, h: baseViewport.height };
 
-    if (!sigRect) {
+    // Si modo manual sin click previo, calcular un autoRect según selector "posición"
+    if (sel.type === 'manual' && !autoRect && cpArr.length === 0) {
       const W = 185, H = 32, MARGIN = 18;
       let x, y;
       if      (sigPos === 'bottom-right') { x = pageDims.w - W - MARGIN; y = MARGIN; }
       else if (sigPos === 'bottom-left')  { x = MARGIN; y = MARGIN; }
       else if (sigPos === 'top-right')    { x = pageDims.w - W - MARGIN; y = pageDims.h - H - MARGIN; }
       else                                { x = MARGIN; y = pageDims.h - H - MARGIN; }
-      sigRect = [x, y, W, H];
+      autoRect = [x, y, W, H];
     }
 
     const targetWidth = Math.max(220, wrap.clientWidth - 16);
@@ -1059,61 +1112,93 @@ async function renderPreview(doc) {
     await page.render({ canvasContext: ctx, viewport }).promise;
     if (myToken !== previewToken) return;
 
-    // Dibujar rectángulo de firma en color amarillo accent
-    const [px, py, pw, ph] = sigRect;
-    const cx = px * scale;
-    const cy = (pageDims.h - py - ph) * scale;
-    const cw = pw * scale;
-    const ch = ph * scale;
+    // Helper: dibujar un rectángulo de firma en coords PDF sobre el canvas
+    function drawSigRect(rect, label, isAuto) {
+      const [px, py, pw, ph] = rect;
+      const cx = px * scale;
+      const cy = (pageDims.h - py - ph) * scale;
+      const cw = pw * scale;
+      const ch = ph * scale;
 
-    ctx.save();
-    ctx.fillStyle = 'rgba(232, 240, 58, 0.20)';
-    ctx.fillRect(cx, cy, cw, ch);
-    ctx.strokeStyle = '#e8f03a';
-    ctx.lineWidth = 2.5;
-    ctx.setLineDash([6, 4]);
-    ctx.strokeRect(cx, cy, cw, ch);
-    ctx.setLineDash([]);
+      ctx.save();
+      ctx.fillStyle = isAuto ? 'rgba(248, 219, 44, 0.18)' : 'rgba(248, 219, 44, 0.30)';
+      ctx.fillRect(cx, cy, cw, ch);
+      ctx.strokeStyle = '#F8DB2C';
+      ctx.lineWidth = isAuto ? 2 : 2.5;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(cx, cy, cw, ch);
+      ctx.setLineDash([]);
 
-    // Etiqueta
-    const labelText = '✒ FIRMA';
-    ctx.font = '600 11px "IBM Plex Sans", sans-serif';
-    const labelW = ctx.measureText(labelText).width + 12;
-    const labelH = 16;
-    const labelY = Math.max(0, cy - labelH);
-    ctx.fillStyle = '#e8f03a';
-    ctx.fillRect(cx, labelY, labelW, labelH);
-    ctx.fillStyle = '#0f0f0f';
-    ctx.fillText(labelText, cx + 6, labelY + 12);
-    ctx.restore();
+      ctx.font = '700 11px "Raleway", sans-serif';
+      const labelW = ctx.measureText(label).width + 12;
+      const labelH = 16;
+      const labelY = Math.max(0, cy - labelH);
+      ctx.fillStyle = '#F8DB2C';
+      ctx.fillRect(cx, labelY, labelW, labelH);
+      ctx.fillStyle = '#293A5F';
+      ctx.fillText(label, cx + 6, labelY + 12);
+      ctx.restore();
 
-    // CLICK-TO-PLACE: al pulsar canvas, mover firma a esa posición
+      return { cx, cy, cw, ch };
+    }
+
+    // Posiciones a dibujar en ESTA página
+    const onPage = cpArr.filter(p => p.page === pageNum);
+    const drawnRects = [];
+
+    if (onPage.length > 0) {
+      // Hay clicks en esta página → dibujarlos todos
+      onPage.forEach((p, i) => {
+        const r = drawSigRect([p.x, p.y, p.w, p.h], `✒ ${i + 1}`, false);
+        drawnRects.push({ ...r, idxInArr: cpArr.indexOf(p) });
+      });
+    } else if (autoRect && (sel.type === 'acro' || sel.type === 'text' ||
+                            (sel.type === 'manual' && cpArr.length === 0))) {
+      // Sin clicks en esta página: mostrar el autoRect (campo detectado o manual auto)
+      const labelType = sel.type === 'acro' ? '✒ FIRMA' :
+                        sel.type === 'text' ? '✒ FIRMA' : '✒ FIRMA';
+      drawSigRect(autoRect, labelType, true);
+    }
+
+    // CLICK-TO-PLACE: añadir nueva posición al array
     canvas.addEventListener('click', (ev) => {
       const rect = canvas.getBoundingClientRect();
       const clickX = (ev.clientX - rect.left) * (canvas.width / rect.width);
       const clickY = (ev.clientY - rect.top)  * (canvas.height / rect.height);
+
+      // Si el click cae dentro de un rect ya dibujado → eliminarlo (toggle)
+      for (const r of drawnRects) {
+        if (clickX >= r.cx && clickX <= r.cx + r.cw &&
+            clickY >= r.cy && clickY <= r.cy + r.ch) {
+          if (typeof r.idxInArr === 'number' && r.idxInArr >= 0) {
+            const removed = cpArr.splice(r.idxInArr, 1)[0];
+            customPos[doc.id] = cpArr;
+            log('info', `Posición ${r.idxInArr + 1} eliminada (p.${removed.page})`);
+            renderDocList();
+            renderCfg(doc);
+            return;
+          }
+        }
+      }
+
       const sc = parseFloat(canvas.dataset.scale);
       const pH = parseFloat(canvas.dataset.pageH);
-
-      // Tamaño en PDF puntos (igual al sello que dibuja signDoc)
+      const pW = parseFloat(canvas.dataset.pageW);
       const W = 185, H = 32;
-
-      // Convertir click → PDF (origen abajo-izda). Centramos rect en el click.
       const pdfX = (clickX / sc) - W / 2;
       const pdfY = pH - (clickY / sc) - H / 2;
-
-      // Clamp dentro de página
-      const fx = Math.max(0, Math.min(pdfX, parseFloat(canvas.dataset.pageW) - W));
+      const fx = Math.max(0, Math.min(pdfX, pW - W));
       const fy = Math.max(0, Math.min(pdfY, pH - H));
 
-      customPos[doc.id] = {
+      cpArr.push({
         page: parseInt(canvas.dataset.page, 10),
-        x: fx, y: fy, w: W, h: H
-      };
+        x: fx, y: fy, w: W, h: H,
+      });
+      customPos[doc.id] = cpArr;
       // Forzar modo manual
       fieldSel[doc.id] = { type: 'manual' };
       if (doc.status === 'pending') doc.status = 'ready';
-      log('info', `Firma colocada en p.${canvas.dataset.page} (${Math.round(fx)},${Math.round(fy)})`);
+      log('info', `Firma ${cpArr.length} colocada en p.${canvas.dataset.page} (${Math.round(fx)},${Math.round(fy)})`);
       renderDocList();
       renderCfg(doc);
     });
@@ -1130,20 +1215,7 @@ async function renderPreview(doc) {
       prev.textContent = '‹';
       prev.disabled = pageNum <= 1;
       prev.onclick = () => {
-        const newPage = Math.max(1, pageNum - 1);
-        // Si manual sin custom: cambiar el dropdown a 'first' temporal trampita
-        if (sel.type === 'manual') {
-          // Si ya hay customPos, mover de página manteniendo posición relativa
-          if (customPos[doc.id]) {
-            customPos[doc.id].page = newPage;
-            renderPreview(doc);
-            return;
-          }
-          // Si no hay customPos, cambiar la opción "página" del dropdown
-          document.getElementById('sigPage').value = newPage === 1 ? 'first' : 'last';
-        }
-        // Forzar render de esa página específica
-        previewPageOverride = newPage;
+        previewPageOverride = Math.max(1, pageNum - 1);
         renderPreview(doc);
       };
       navRow.appendChild(prev);
@@ -1151,8 +1223,15 @@ async function renderPreview(doc) {
 
     const info = document.createElement('div');
     info.className = 'preview-info';
-    info.innerHTML = `<span>Página <strong>${pageNum}</strong>/${doc.totalPages || '?'}</span>` +
-                     `<span class="hint">Clic para colocar la firma</span>`;
+    const totalClicks = cpArr.length;
+    const clicksHere  = onPage.length;
+    let statusTxt = `<span>P. <strong>${pageNum}</strong>/${doc.totalPages || '?'}</span>`;
+    if (totalClicks > 0) {
+      statusTxt += `<span class="hint">${clicksHere} aquí · ${totalClicks} total</span>`;
+    } else {
+      statusTxt += `<span class="hint">Clic para añadir firma</span>`;
+    }
+    info.innerHTML = statusTxt;
     navRow.appendChild(info);
 
     if ((doc.totalPages || 1) > 1) {
@@ -1161,26 +1240,19 @@ async function renderPreview(doc) {
       next.textContent = '›';
       next.disabled = pageNum >= (doc.totalPages || 1);
       next.onclick = () => {
-        const newPage = Math.min(doc.totalPages, pageNum + 1);
-        if (sel.type === 'manual' && customPos[doc.id]) {
-          customPos[doc.id].page = newPage;
-          renderPreview(doc);
-          return;
-        }
-        previewPageOverride = newPage;
+        previewPageOverride = Math.min(doc.totalPages, pageNum + 1);
         renderPreview(doc);
       };
       navRow.appendChild(next);
     }
 
-    // Botón reset si hay custom
-    if (customPos[doc.id]) {
+    if (cpArr.length > 0) {
       const reset = document.createElement('button');
       reset.className = 'preview-reset';
-      reset.textContent = '↺ Resetear';
+      reset.textContent = `↺ Limpiar (${cpArr.length})`;
       reset.onclick = () => {
         delete customPos[doc.id];
-        log('info', 'Posición personalizada eliminada');
+        log('info', 'Todas las posiciones personalizadas eliminadas');
         renderPreview(doc);
       };
       navRow.appendChild(reset);
@@ -1189,7 +1261,6 @@ async function renderPreview(doc) {
     wrap.appendChild(navRow);
     wrap.appendChild(canvas);
 
-    // Reset override después de usar
     previewPageOverride = null;
   } catch(e) {
     if (myToken !== previewToken) return;
@@ -1347,13 +1418,17 @@ async function signDoc(doc) {
   const W = 185, H = 32, MARGIN = 18;
   const fs = 7, fsSmall = 6;
 
-  // Determinar posición del sello + widget
+  // Determinar posición(es) del sello + widget
   let targets = [];
-  const cp = customPos[doc.id];
-  if (cp && sel.type === 'manual') {
-    // Posición fijada con click-to-place
-    targets = [{ pageIdx: cp.page - 1, x: cp.x, y: cp.y, w: cp.w, h: cp.h }];
-    log('info', `Posición: click-to-place p.${cp.page} (${Math.round(cp.x)},${Math.round(cp.y)})`);
+  const cpArr = customPos[doc.id] || [];
+
+  if (cpArr.length > 0 && sel.type === 'manual') {
+    // 1+ posiciones fijadas con click-to-place (puede ser en varias páginas)
+    targets = cpArr.map(p => ({
+      pageIdx: p.page - 1, x: p.x, y: p.y, w: p.w, h: p.h
+    }));
+    const pageList = [...new Set(cpArr.map(p => p.page))].sort((a,b)=>a-b);
+    log('info', `Posición: ${cpArr.length} click(s) en página(s) ${pageList.join(',')}`);
   } else if (sel.type === 'acro' && doc.sigFields[sel.idx]) {
     const f = doc.sigFields[sel.idx];
     const [x1, y1, x2, y2] = f.rect;
@@ -1369,10 +1444,18 @@ async function signDoc(doc) {
     targets = [{ pageIdx: m.page - 1, x, y, w: W, h: H }];
     log('info', `Posición: texto "${m.text}" p.${m.page}`);
   } else {
+    // Manual sin clicks: aplicar la posición del selector a las páginas indicadas
     let pageIdxs = [];
-    if (sigPage === 'first') pageIdxs = [0];
-    else if (sigPage === 'last') pageIdxs = [pages.length - 1];
-    else pageIdxs = pages.map((_, i) => i);
+    const sigRange = document.getElementById('sigRange')?.value || '';
+    if      (sigPage === 'first')  pageIdxs = [0];
+    else if (sigPage === 'last')   pageIdxs = [pages.length - 1];
+    else if (sigPage === 'all')    pageIdxs = pages.map((_, i) => i);
+    else if (sigPage === 'custom') pageIdxs = parsePageRange(sigRange, pages.length).map(n => n - 1);
+    else pageIdxs = [pages.length - 1];
+
+    if (pageIdxs.length === 0) {
+      throw new Error('Rango de páginas inválido o vacío');
+    }
     pageIdxs.forEach(pageIdx => {
       const { width, height } = pages[pageIdx].getSize();
       let x, y;
@@ -1382,7 +1465,7 @@ async function signDoc(doc) {
       else                                { x = MARGIN; y = height - H - MARGIN; }
       targets.push({ pageIdx, x, y, w: W, h: H });
     });
-    log('info', `Posición: manual ${sigPos} (${pageIdxs.length} pág.)`);
+    log('info', `Posición: manual ${sigPos} (${pageIdxs.length} pág.: ${pageIdxs.map(i=>i+1).join(',')})`);
   }
 
   // Dibujar sello visible en cada target
@@ -1426,69 +1509,89 @@ async function signDoc(doc) {
   });
   const sigRef = pdfDoc.context.register(sigDict);
 
-  // Widget en la posición del primer target (si hay varios sellos, solo el primero es campo)
-  const t0 = targets[0];
-  const targetPage = pages[t0 ? t0.pageIdx : 0];
-  const wx = t0 ? t0.x : 0, wy = t0 ? t0.y : 0;
-  const wx2 = t0 ? t0.x + t0.w : 0, wy2 = t0 ? t0.y + t0.h : 0;
+  // Crear N widgets (uno por target), TODOS apuntando al mismo sigRef.
+  // Esto produce 1 firma criptográfica con N representaciones visuales en el PDF.
+  // El primer widget tiene el campo principal (T="IntelecSig_..." y V=sigRef).
+  // Los demás son widgets "kids" que comparten /V (representación visual adicional).
+  const widgetRefs = [];
+  const sigFieldName = 'IntelecSig_' + Date.now();
 
-  const widget = pdfDoc.context.obj({
-    Type: 'Annot',
-    Subtype: 'Widget',
-    FT: 'Sig',
-    Rect: pdfDoc.context.obj([
-      PDFNumber.of(wx), PDFNumber.of(wy),
-      PDFNumber.of(wx2), PDFNumber.of(wy2),
-    ]),
-    T: PDFString.of('IntelecSig_' + Date.now()),
-    V: sigRef,
-    P: targetPage.ref,
-    F: PDFNumber.of(4),
-  });
-  const widgetRef = pdfDoc.context.register(widget);
+  if (targets.length === 0) {
+    throw new Error('No hay posiciones de firma');
+  }
 
-  // Añadir el widget a las anotaciones de la página
-  let annots = targetPage.node.get(PDFName.of('Annots'));
-  if (annots) {
-    if (annots.constructor && annots.constructor.name === 'PDFRef') {
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    if (t.pageIdx < 0 || t.pageIdx >= pages.length) continue;
+    const tPage = pages[t.pageIdx];
+
+    const widget = pdfDoc.context.obj({
+      Type: 'Annot',
+      Subtype: 'Widget',
+      FT: 'Sig',
+      Rect: pdfDoc.context.obj([
+        PDFNumber.of(t.x), PDFNumber.of(t.y),
+        PDFNumber.of(t.x + t.w), PDFNumber.of(t.y + t.h),
+      ]),
+      // Solo el primer widget tiene T (nombre del campo). El resto comparte el mismo /V
+      ...(i === 0 ? { T: PDFString.of(sigFieldName) } : {}),
+      V: sigRef,
+      P: tPage.ref,
+      F: PDFNumber.of(4),
+    });
+    const widgetRef = pdfDoc.context.register(widget);
+    widgetRefs.push(widgetRef);
+
+    // Añadir este widget a /Annots de la página correspondiente
+    let annots = tPage.node.get(PDFName.of('Annots'));
+    if (annots) {
       annots = pdfDoc.context.lookup(annots);
     }
     if (annots && typeof annots.push === 'function') {
       annots.push(widgetRef);
     } else {
-      targetPage.node.set(PDFName.of('Annots'), pdfDoc.context.obj([widgetRef]));
+      tPage.node.set(PDFName.of('Annots'), pdfDoc.context.obj([widgetRef]));
     }
-  } else {
-    targetPage.node.set(PDFName.of('Annots'), pdfDoc.context.obj([widgetRef]));
   }
 
-  // Añadir o extender el AcroForm del catálogo
-  let acroForm = pdfDoc.catalog.get(PDFName.of('AcroForm'));
-  if (acroForm) {
-    if (acroForm.constructor && acroForm.constructor.name === 'PDFRef') {
+  // Para el AcroForm añadimos SOLO el primer widget (el resto son kids visuales)
+  const primaryWidgetRef = widgetRefs[0];
+
+  // Añadir o extender el AcroForm del catálogo. Defensivo contra PDFs raros
+  try {
+    let acroForm = pdfDoc.catalog.get(PDFName.of('AcroForm'));
+    if (acroForm) {
       acroForm = pdfDoc.context.lookup(acroForm);
     }
-    if (acroForm) {
+
+    if (acroForm && typeof acroForm.set === 'function' && typeof acroForm.get === 'function') {
       let fields = acroForm.get(PDFName.of('Fields'));
-      if (fields && fields.constructor && fields.constructor.name === 'PDFRef') {
+      if (fields) {
         fields = pdfDoc.context.lookup(fields);
       }
       if (fields && typeof fields.push === 'function') {
-        fields.push(widgetRef);
+        fields.push(primaryWidgetRef);
       } else {
-        acroForm.set(PDFName.of('Fields'), pdfDoc.context.obj([widgetRef]));
+        acroForm.set(PDFName.of('Fields'), pdfDoc.context.obj([primaryWidgetRef]));
       }
       acroForm.set(PDFName.of('SigFlags'), PDFNumber.of(3));
+    } else {
+      const af = pdfDoc.context.obj({
+        SigFlags: PDFNumber.of(3),
+        Fields: pdfDoc.context.obj([primaryWidgetRef]),
+      });
+      pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
     }
-  } else {
+  } catch(acroErr) {
+    log('info', `AcroForm reemplazado: ${acroErr.message}`);
     const af = pdfDoc.context.obj({
       SigFlags: PDFNumber.of(3),
-      Fields: pdfDoc.context.obj([widgetRef]),
+      Fields: pdfDoc.context.obj([primaryWidgetRef]),
     });
     pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
   }
 
-  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.06'));
+  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.07'));
   pdfDoc.setModificationDate(now);
 
   // 4. Guardar el PDF SIN streams comprimidos para poder localizar el placeholder
