@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Firmar con AutoFirma · Intelec</title>
+<script src="autoscript.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700&family=Open+Sans:wght@400;500;600&display=swap');
+:root{
+  --navy:#293A5F;--gold:#F8DB2C;--bg:#f4f6fb;--bg2:#fff;--bg3:#edf0f7;
+  --border:#dde3ee;--text:#0d2b55;--text2:#4a6280;--text3:#8a9cb5;
+  --green:#0e9f62;--green2:rgba(14,159,98,.1);--red:#d63031;--red2:rgba(214,48,49,.1);
+  --f:'Open Sans',sans-serif;--fh:'Raleway',sans-serif;--r:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--f);background:var(--bg);color:var(--text);padding:22px;
+  font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+  padding:20px;max-width:460px;margin:0 auto;box-shadow:0 4px 16px rgba(13,43,85,.1);}
+.hdr{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+.logo{width:36px;height:36px;flex-shrink:0;}
+h1{font-family:var(--fh);font-size:16px;font-weight:700;color:var(--navy);}
+.sub{font-size:11px;color:var(--text2);}
+.fname{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);
+  padding:9px 12px;font-size:12px;font-weight:600;margin-bottom:14px;
+  word-break:break-all;color:var(--text);}
+.btn{width:100%;padding:12px;border:none;border-radius:var(--r);cursor:pointer;
+  font-family:var(--fh);font-size:13px;font-weight:700;transition:.15s;margin-bottom:8px;}
+.btn-primary{background:var(--gold);color:var(--navy);}
+.btn-primary:hover{background:#e09516;}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed;}
+.btn-g{background:var(--bg3);color:var(--text2);border:1px solid var(--border);}
+.btn-g:hover{background:var(--border);color:var(--text);}
+.status{font-size:12px;padding:10px 12px;border-radius:var(--r);margin-bottom:12px;
+  display:none;}
+.status.show{display:block;}
+.status.info{background:#dce8ff;color:#1a4fa0;}
+.status.ok{background:var(--green2);color:var(--green);}
+.status.err{background:var(--red2);color:var(--red);}
+.steps{font-size:11px;color:var(--text2);line-height:1.7;margin-bottom:14px;
+  padding-left:18px;}
+.steps li{margin-bottom:3px;}
+.dl-area{display:none;margin-top:8px;}
+.dl-area.show{display:block;}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="hdr">
+    <svg class="logo" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="16" cy="16" r="16" fill="#F8DB2C"/>
+      <circle cx="16" cy="16" r="11" fill="#293A5F"/>
+      <g transform="translate(16,16) scale(0.55) translate(-12,-12)" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19.5 4.5L12 12L9 14L8 16L4 20"/>
+        <path d="M19.5 4.5C19.5 4.5 21 7 18 11C16 13.5 13 14 11 14L10 13C10 11 10.5 8 13 6C17 3 19.5 4.5 19.5 4.5Z"/>
+        <path d="M11 14L13 16"/>
+      </g>
+    </svg>
+    <div>
+      <h1>Firmar con AutoFirma</h1>
+      <div class="sub">Firma válida · verificable en VALIDe</div>
+    </div>
+  </div>
+
+  <div id="fname" class="fname">Cargando documento…</div>
+
+  <ol class="steps">
+    <li>Pulsa <b>Firmar con AutoFirma</b>.</li>
+    <li>Se abrirá la app AutoFirma; elige tu certificado FNMT.</li>
+    <li>Al terminar, descarga el PDF firmado y adjúntalo a tu respuesta.</li>
+  </ol>
+
+  <div id="status" class="status"></div>
+
+  <button class="btn btn-primary" id="btnSign" onclick="doSign()">🛡️ Firmar con AutoFirma</button>
+
+  <div class="dl-area" id="dlArea">
+    <button class="btn btn-primary" id="btnDl" onclick="downloadSigned()">⬇ Descargar PDF firmado</button>
+  </div>
+
+  <button class="btn btn-g" onclick="window.close()">Cerrar</button>
+</div>
+
+<script>
+let pdfB64 = sessionStorage.getItem('intelec_firma_pdf') || '';
+let pdfName = sessionStorage.getItem('intelec_firma_name') || 'documento.pdf';
+let signedB64 = null;
+
+document.getElementById('fname').textContent = pdfName;
+if (!pdfB64) {
+  setStatus('err', 'No se encontró el documento. Vuelve al panel de Outlook e inténtalo de nuevo.');
+  document.getElementById('btnSign').disabled = true;
+}
+
+function setStatus(type, msg) {
+  const el = document.getElementById('status');
+  el.className = 'status show ' + type;
+  el.textContent = msg;
+}
+
+function doSign() {
+  if (!pdfB64) return;
+  if (typeof AutoScript === 'undefined') {
+    setStatus('err', 'autoscript.js no cargó. Recarga la página.');
+    return;
+  }
+  document.getElementById('btnSign').disabled = true;
+  setStatus('info', 'Conectando con AutoFirma… acepta el diálogo de la app.');
+
+  try {
+    AutoScript.cargarAppAfirma();
+  } catch(e) {
+    setStatus('err', 'No se pudo iniciar AutoFirma: ' + e.message);
+    document.getElementById('btnSign').disabled = false;
+    return;
+  }
+
+  const params = [
+    'signatureProductionCity=Madrid',
+    'signerContact=contabilidad@intelecsl.com',
+  ].join('\n');
+
+  AutoScript.sign(
+    pdfB64,
+    'SHA512withRSA',
+    'PAdES',
+    params,
+    function(signatureB64) {
+      signedB64 = signatureB64;
+      setStatus('ok', '✓ Documento firmado correctamente. Descárgalo abajo.');
+      document.getElementById('dlArea').classList.add('show');
+      document.getElementById('btnSign').style.display = 'none';
+    },
+    function(type, message) {
+      setStatus('err', 'Error: ' + (message || type || 'desconocido') +
+        '. ¿Tienes AutoFirma instalado? Descárgalo en firmaelectronica.gob.es');
+      document.getElementById('btnSign').disabled = false;
+    }
+  );
+}
+
+function downloadSigned() {
+  if (!signedB64) return;
+  const bin = atob(signedB64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = pdfName.replace(/\.pdf$/i, '') + '_firmado.pdf';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
