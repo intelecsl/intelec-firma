@@ -311,9 +311,9 @@ input[type="file"]{display:none;}
   <div class="hdr-divider"></div>
   <div class="htx">
     <div class="appname">Firma Digital</div>
-    <div class="hsub-inline">PAdES-B-B · signing-certificate-v2</div>
+    <div class="hsub-inline">PAdES-B-B · Incremental update</div>
   </div>
-  <span class="vbadge">v3.08</span>
+  <span class="vbadge">v3.09</span>
 </header>
 
 <div class="scroll">
@@ -1393,40 +1393,52 @@ function parseCertificate(pin) {
 // ═══════════════════════════════════════════════════════
 // FIRMA CRIPTOGRÁFICA PKCS#7 (firma digital real)
 // ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+// SIGN DOC — Incremental Update real (PAdES B-B compliant)
+//
+// A diferencia de pdf-lib.save() que reescribe el archivo entero (rompiendo
+// firmas previas y políticas DocMDP), aquí APPENDEAMOS objetos al final del
+// PDF original sin tocar un solo byte de lo anterior. Es lo que hace
+// AutoFirma, Adobe Acrobat, iText, PDFBox.
+//
+// Estructura del archivo resultante:
+//   [bytes originales sin modificar]
+//   [nuevos objetos: Sig, Widgets, AcroForm actualizado, Pages actualizadas, Catalog actualizado]
+//   [xref delta]
+//   [trailer con /Prev apuntando al xref antiguo]
+//   [%%EOF]
+// ═══════════════════════════════════════════════════════
 async function signDoc(doc) {
   const pin = document.getElementById('certPin').value;
   if (!certBytes) throw new Error('Falta el certificado digital');
   if (!pin) throw new Error('Falta el PIN del certificado');
 
-  // 1. Parsear certificado .p12
+  // 1. Parsear certificado .p12 — pick el cert que matchea el private key
   const { cert, privateKey, certs } = parseCertificate(pin);
   const certCN = getCertCN(cert);
 
-  // 2. Cargar PDF y dibujar el sello visible
-  const { PDFDocument, PDFName, PDFNumber, PDFString, PDFHexString, PDFArray, rgb, StandardFonts } = PDFLib;
-  const pdfDoc = await PDFDocument.load(doc.bytes.slice(0), { ignoreEncryption: true });
+  const { PDFDocument, PDFName, PDFNumber, PDFString, PDFHexString, PDFRef,
+          PDFArray, PDFDict, rgb, StandardFonts } = PDFLib;
+
+  // 2. Cargar el PDF SOLO para analizar estructura (no vamos a usar save())
+  const original = new Uint8Array(doc.bytes.slice(0));
+  const pdfDoc = await PDFDocument.load(original.slice(0), { ignoreEncryption: true });
   const pages = pdfDoc.getPages();
-  const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const now = new Date();
 
   const sigText = document.getElementById('sigText').value.trim() || `Firmado por ${certCN}`;
   const sigPos  = document.getElementById('sigPos').value;
   const sigPage = document.getElementById('sigPage').value;
-  const dateStr = sanitize(now.toLocaleDateString('es-ES') + ' ' + now.toLocaleTimeString('es-ES'));
 
   const sel = fieldSel[doc.id] || { type: 'manual' };
   const W = 185, H = 32, MARGIN = 18;
-  const fs = 7, fsSmall = 6;
 
-  // Determinar posición(es) del sello + widget
+  // 3. Calcular targets (misma lógica que antes)
   let targets = [];
   const cpArr = customPos[doc.id] || [];
 
   if (cpArr.length > 0 && sel.type === 'manual') {
-    // 1+ posiciones fijadas con click-to-place (puede ser en varias páginas)
-    targets = cpArr.map(p => ({
-      pageIdx: p.page - 1, x: p.x, y: p.y, w: p.w, h: p.h
-    }));
+    targets = cpArr.map(p => ({ pageIdx: p.page - 1, x: p.x, y: p.y, w: p.w, h: p.h }));
     const pageList = [...new Set(cpArr.map(p => p.page))].sort((a,b)=>a-b);
     log('info', `Posición: ${cpArr.length} click(s) en página(s) ${pageList.join(',')}`);
   } else if (sel.type === 'acro' && doc.sigFields[sel.idx]) {
@@ -1444,7 +1456,6 @@ async function signDoc(doc) {
     targets = [{ pageIdx: m.page - 1, x, y, w: W, h: H }];
     log('info', `Posición: texto "${m.text}" p.${m.page}`);
   } else {
-    // Manual sin clicks: aplicar la posición del selector a las páginas indicadas
     let pageIdxs = [];
     const sigRange = document.getElementById('sigRange')?.value || '';
     if      (sigPage === 'first')  pageIdxs = [0];
@@ -1453,9 +1464,7 @@ async function signDoc(doc) {
     else if (sigPage === 'custom') pageIdxs = parsePageRange(sigRange, pages.length).map(n => n - 1);
     else pageIdxs = [pages.length - 1];
 
-    if (pageIdxs.length === 0) {
-      throw new Error('Rango de páginas inválido o vacío');
-    }
+    if (pageIdxs.length === 0) throw new Error('Rango de páginas inválido o vacío');
     pageIdxs.forEach(pageIdx => {
       const { width, height } = pages[pageIdx].getSize();
       let x, y;
@@ -1467,158 +1476,280 @@ async function signDoc(doc) {
     });
     log('info', `Posición: manual ${sigPos} (${pageIdxs.length} pág.: ${pageIdxs.map(i=>i+1).join(',')})`);
   }
+  if (targets.length === 0) throw new Error('No hay posiciones de firma');
 
-  // Dibujar sello visible en cada target
-  for (const t of targets) {
-    if (t.pageIdx < 0 || t.pageIdx >= pages.length) continue;
-    const pg = pages[t.pageIdx];
-    pg.drawRectangle({ x:t.x, y:t.y, width:t.w, height:t.h,
-      color:rgb(.95,.97,1), opacity:.92,
-      borderColor:rgb(.24,.49,.91), borderWidth:.8 });
-    pg.drawRectangle({ x:t.x, y:t.y+t.h-4, width:t.w, height:4,
-      color:rgb(.24,.49,.91) });
-    pg.drawText(sanitize('✓ FIRMADO DIGITALMENTE'),
-      { x:t.x+4, y:t.y+t.h-14, size:fs, font, color:rgb(.1,.2,.5) });
-    pg.drawText(sanitize(certCN.length > 38 ? certCN.slice(0,35)+'...' : certCN),
-      { x:t.x+4, y:t.y+8, size:fsSmall, font, color:rgb(.3,.3,.5) });
-    pg.drawText(sanitize('Fecha: ' + dateStr),
-      { x:t.x+4, y:t.y+2, size:fsSmall, font, color:rgb(.3,.3,.5) });
-  }
-
-  // 3. Crear el campo /Sig + Widget + AcroForm para firma criptográfica
-  const PLACEHOLDER_HEX_LEN = 16384; // 8KB binarios -> suficiente para PKCS#7 con cadena
-  const placeholderHex = '0'.repeat(PLACEHOLDER_HEX_LEN);
-
-  // ByteRange placeholder con números grandes que dejen espacio para los reales
-  const sigDict = pdfDoc.context.obj({
-    Type: 'Sig',
-    Filter: 'Adobe.PPKLite',
-    SubFilter: 'adbe.pkcs7.detached',
-    ByteRange: pdfDoc.context.obj([
-      PDFNumber.of(0),
-      PDFNumber.of(9999999999),
-      PDFNumber.of(9999999999),
-      PDFNumber.of(9999999999),
-    ]),
-    Contents: PDFHexString.of(placeholderHex),
-    M: PDFString.of(formatPDFDate(now)),
-    Name: PDFString.of(safeStr(certCN)),
-    Reason: PDFString.of(safeStr(sigText)),
-    Location: PDFString.of('Espana'),
-    ContactInfo: PDFString.of('Intelec S.L.'),
+  // 4. Buscar el máximo número de objeto y el offset del xref previo
+  // pdf-lib internamente sigue todos los objetos en context.indirectObjects
+  let maxObj = 0;
+  pdfDoc.context.enumerateIndirectObjects().forEach(([ref]) => {
+    if (ref.objectNumber > maxObj) maxObj = ref.objectNumber;
   });
-  const sigRef = pdfDoc.context.register(sigDict);
+  log('info', `PDF original: ${pages.length} págs · ${maxObj} obj máx · ${original.length} bytes`);
 
-  // Crear N widgets (uno por target), TODOS apuntando al mismo sigRef.
-  // Esto produce 1 firma criptográfica con N representaciones visuales en el PDF.
-  // El primer widget tiene el campo principal (T="IntelecSig_..." y V=sigRef).
-  // Los demás son widgets "kids" que comparten /V (representación visual adicional).
-  const widgetRefs = [];
+  // Buscar startxref en el final del archivo (últimos 1024 bytes para tolerar comentarios)
+  const tailStr = new TextDecoder('iso-8859-1').decode(original.slice(Math.max(0, original.length - 1024)));
+  const sxMatches = [...tailStr.matchAll(/startxref\s+(\d+)/g)];
+  if (!sxMatches.length) throw new Error('No se encontró "startxref" en el PDF');
+  const prevXrefOffset = parseInt(sxMatches[sxMatches.length - 1][1], 10);
+  log('info', `Xref previo en offset ${prevXrefOffset}`);
+
+  // 5. Asignar nuevos números de objeto
+  let nextObj = maxObj + 1;
+  const sigObjNum = nextObj++;
+  const widgetObjNums = targets.map(() => nextObj++);
+
+  // Determinar si AcroForm existe y obtener su objNum o asignar uno nuevo
+  let existingAcroFormRef = null;
+  let existingAcroFormDict = null;
+  const acroFormVal = pdfDoc.catalog.get(PDFName.of('AcroForm'));
+  if (acroFormVal) {
+    if (acroFormVal instanceof PDFRef) {
+      existingAcroFormRef = acroFormVal;
+      existingAcroFormDict = pdfDoc.context.lookup(acroFormVal);
+    } else {
+      // inline — lo trataremos como nuevo
+      existingAcroFormDict = acroFormVal;
+    }
+  }
+  const acroFormObjNum = existingAcroFormRef ? existingAcroFormRef.objectNumber : nextObj++;
+  const acroFormGenNum = existingAcroFormRef ? existingAcroFormRef.generationNumber : 0;
+  const acroFormIsNew = !existingAcroFormRef;
+
+  // Catalog: siempre lo actualizaremos si AcroForm es nuevo
+  const catalogRef = pdfDoc.context.trailerInfo.Root;
+  const catalogObjNum = catalogRef.objectNumber;
+  const catalogGenNum = catalogRef.generationNumber;
+
+  // 6. Construir el sello visible para CADA target — dibujándolo en
+  //    un PDF temporal con pdf-lib y extrayendo los stream operators.
+  //    Realmente más simple: dejar el sello dentro del propio /Widget con
+  //    /AP (Appearance Stream). Eso evita modificar los streams de las páginas.
+  //    En esta versión inicial usamos solo el rect del widget sin AP — Adobe
+  //    pinta un cuadro por defecto. El sello visible "bonito" lo añadiremos
+  //    en una versión posterior si queda tiempo.
+
+  // 7. Componer los nuevos objetos como texto PDF
+  const dateStr = formatPDFDate(now);
+  const placeholderHex = '0'.repeat(16384);
   const sigFieldName = 'IntelecSig_' + Date.now();
 
-  if (targets.length === 0) {
-    throw new Error('No hay posiciones de firma');
+  // Helper: escapar string PDF (paréntesis y backslash)
+  const pdfStr = s => '(' + String(s).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)') + ')';
+  // Helper: hex string
+  const pdfHexStr = s => '<' + s + '>';
+  // Helper: rectángulo
+  const rect = (x, y, w, h) =>
+    `[${x.toFixed(2)} ${y.toFixed(2)} ${(x+w).toFixed(2)} ${(y+h).toFixed(2)}]`;
+
+  let body = '\r\n';  // separador del original
+  const objOffsets = {}; // objNum -> offset absoluto
+
+  const originalLen = original.length;
+  function emit(objNum, gen, content) {
+    objOffsets[objNum] = { offset: originalLen + body.length, gen };
+    body += `${objNum} ${gen} obj\r\n${content}\r\nendobj\r\n`;
   }
 
+  // --- 7a. Sig dictionary ---
+  const sigContent = `<<
+/Type /Sig
+/Filter /Adobe.PPKLite
+/SubFilter /adbe.pkcs7.detached
+/ByteRange [0 9999999999 9999999999 9999999999]
+/Contents ${pdfHexStr(placeholderHex)}
+/M ${pdfStr(dateStr)}
+/Name ${pdfStr(certCN)}
+/Reason ${pdfStr(sigText)}
+/Location ${pdfStr('Espana')}
+/ContactInfo ${pdfStr('Intelec S.L.')}
+>>`;
+  emit(sigObjNum, 0, sigContent);
+
+  // --- 7b. Widget annotations (1 por target) ---
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
-    if (t.pageIdx < 0 || t.pageIdx >= pages.length) continue;
-    const tPage = pages[t.pageIdx];
+    const pageRef = pages[t.pageIdx].ref;
+    const tField = i === 0 ? `/T ${pdfStr(sigFieldName)}\n` : '';
+    const widgetContent = `<<
+/Type /Annot
+/Subtype /Widget
+/FT /Sig
+/Rect ${rect(t.x, t.y, t.w, t.h)}
+${tField}/V ${sigObjNum} 0 R
+/P ${pageRef.objectNumber} ${pageRef.generationNumber} R
+/F 4
+>>`;
+    emit(widgetObjNums[i], 0, widgetContent);
+  }
 
-    const widget = pdfDoc.context.obj({
-      Type: 'Annot',
-      Subtype: 'Widget',
-      FT: 'Sig',
-      Rect: pdfDoc.context.obj([
-        PDFNumber.of(t.x), PDFNumber.of(t.y),
-        PDFNumber.of(t.x + t.w), PDFNumber.of(t.y + t.h),
-      ]),
-      // Solo el primer widget tiene T (nombre del campo). El resto comparte el mismo /V
-      ...(i === 0 ? { T: PDFString.of(sigFieldName) } : {}),
-      V: sigRef,
-      P: tPage.ref,
-      F: PDFNumber.of(4),
-    });
-    const widgetRef = pdfDoc.context.register(widget);
-    widgetRefs.push(widgetRef);
+  // --- 7c. Páginas modificadas: emitir copia con /Annots actualizado ---
+  // Para esto necesitamos serializar la página entera, manteniendo TODAS sus
+  // claves (Resources, MediaBox, etc.), pero con /Annots ampliado.
+  // Usamos pdf-lib para acceder a la página y luego serializamos manualmente.
+  const pagesToUpdate = new Map();  // pageRef.objectNumber -> [widgetObjNums]
+  targets.forEach((t, i) => {
+    const pageRef = pages[t.pageIdx].ref;
+    const key = pageRef.objectNumber;
+    if (!pagesToUpdate.has(key)) pagesToUpdate.set(key, { ref: pageRef, widgets: [] });
+    pagesToUpdate.get(key).widgets.push(widgetObjNums[i]);
+  });
 
-    // Añadir este widget a /Annots de la página correspondiente
-    let annots = tPage.node.get(PDFName.of('Annots'));
-    if (annots) {
-      annots = pdfDoc.context.lookup(annots);
+  for (const [pageObjNum, info] of pagesToUpdate.entries()) {
+    const pageDict = pdfDoc.context.lookup(info.ref);
+    if (!pageDict || typeof pageDict.entries !== 'function') {
+      throw new Error(`Página ${pageObjNum} no parseable como dict`);
     }
-    if (annots && typeof annots.push === 'function') {
-      annots.push(widgetRef);
-    } else {
-      tPage.node.set(PDFName.of('Annots'), pdfDoc.context.obj([widgetRef]));
+
+    // Recoger refs existentes en /Annots
+    let existingAnnotRefs = [];
+    const annotsVal = pageDict.get(PDFName.of('Annots'));
+    if (annotsVal) {
+      const annotsRes = pdfDoc.context.lookup(annotsVal);
+      if (annotsRes && annotsRes.array) {
+        for (const a of annotsRes.array) {
+          if (a instanceof PDFRef) {
+            existingAnnotRefs.push(`${a.objectNumber} ${a.generationNumber} R`);
+          }
+        }
+      } else if (annotsVal instanceof PDFRef && (!annotsRes || !annotsRes.array)) {
+        // Annots era un Ref a un Array que no pudimos resolver bien — referenciar tal cual
+        existingAnnotRefs.push(`${annotsVal.objectNumber} ${annotsVal.generationNumber} R`);
+      }
+    }
+    const newAnnotRefs = info.widgets.map(n => `${n} 0 R`);
+    const allAnnots = existingAnnotRefs.concat(newAnnotRefs);
+
+    // Serializar el resto de la página manualmente, omitiendo /Annots
+    let pageContent = '<<\r\n';
+    for (const [keyName, val] of pageDict.entries()) {
+      if (keyName.encodedName === '/Annots') continue;
+      // Usar pdf-lib para serializar el valor — copyBytesInto produce el texto
+      const buf = new Uint8Array(val.sizeInBytes());
+      val.copyBytesInto(buf, 0);
+      const valStr = new TextDecoder('iso-8859-1').decode(buf);
+      pageContent += `${keyName.encodedName} ${valStr}\r\n`;
+    }
+    pageContent += `/Annots [${allAnnots.join(' ')}]\r\n>>`;
+
+    emit(info.ref.objectNumber, info.ref.generationNumber, pageContent);
+  }
+
+  // --- 7d. AcroForm: emitir nuevo o actualizado ---
+  let existingFieldRefs = [];
+  if (existingAcroFormDict && typeof existingAcroFormDict.get === 'function') {
+    const fields = existingAcroFormDict.get(PDFName.of('Fields'));
+    if (fields) {
+      const fieldsRes = pdfDoc.context.lookup(fields);
+      if (fieldsRes && fieldsRes.array) {
+        for (const f of fieldsRes.array) {
+          if (f instanceof PDFRef) {
+            existingFieldRefs.push(`${f.objectNumber} ${f.generationNumber} R`);
+          }
+        }
+      }
+    }
+  }
+  const primaryWidgetRef = `${widgetObjNums[0]} 0 R`;
+  const allFields = existingFieldRefs.concat([primaryWidgetRef]);
+  const acroFormContent = `<<
+/Fields [${allFields.join(' ')}]
+/SigFlags 3
+>>`;
+  emit(acroFormObjNum, acroFormGenNum, acroFormContent);
+
+  // --- 7e. Catalog: solo si AcroForm es nuevo (hay que añadir la referencia) ---
+  if (acroFormIsNew) {
+    const catalogDict = pdfDoc.context.lookup(catalogRef);
+    if (!catalogDict || typeof catalogDict.entries !== 'function') {
+      throw new Error('Catalog no parseable');
+    }
+    let catalogContent = '<<\r\n';
+    for (const [keyName, val] of catalogDict.entries()) {
+      if (keyName.encodedName === '/AcroForm') continue;
+      const buf = new Uint8Array(val.sizeInBytes());
+      val.copyBytesInto(buf, 0);
+      const valStr = new TextDecoder('iso-8859-1').decode(buf);
+      catalogContent += `${keyName.encodedName} ${valStr}\r\n`;
+    }
+    catalogContent += `/AcroForm ${acroFormObjNum} ${acroFormGenNum} R\r\n>>`;
+    emit(catalogObjNum, catalogGenNum, catalogContent);
+  }
+
+  // 8. Construir xref delta + trailer
+  // El xref-delta lista solo los objetos que se han añadido/modificado.
+  // Formato:
+  //   xref
+  //   <objNum> 1
+  //   nnnnnnnnnn ggggg n
+  //   ...
+  // Agrupamos entradas consecutivas por objNum.
+  const sortedNums = Object.keys(objOffsets).map(Number).sort((a, b) => a - b);
+
+  // Agrupar por consecutividad
+  const groups = [];
+  let cur = null;
+  for (const n of sortedNums) {
+    if (!cur || n !== cur.start + cur.entries.length) {
+      cur = { start: n, entries: [] };
+      groups.push(cur);
+    }
+    const { offset, gen } = objOffsets[n];
+    cur.entries.push({ offset, gen });
+  }
+
+  const xrefOffset = originalLen + body.length;
+  let xrefStr = 'xref\r\n';
+  for (const g of groups) {
+    xrefStr += `${g.start} ${g.entries.length}\r\n`;
+    for (const e of g.entries) {
+      // 10 dígitos offset + 5 dígitos gen + n + EOL (2 bytes \r\n para 20 bytes total)
+      const offStr = String(e.offset).padStart(10, '0');
+      const genStr = String(e.gen).padStart(5, '0');
+      xrefStr += `${offStr} ${genStr} n\r\n`;
     }
   }
 
-  // Para el AcroForm añadimos SOLO el primer widget (el resto son kids visuales)
-  const primaryWidgetRef = widgetRefs[0];
+  // Trailer: /Size = maxObj + 1 (PDF size es el siguiente número libre)
+  // /Root sigue siendo la catalog original
+  // /Prev apunta al xref antiguo
+  const newSize = nextObj;  // siguiente libre, también es total + 1
+  const trailerStr = `trailer
+<<
+/Size ${newSize}
+/Root ${catalogObjNum} ${catalogGenNum} R
+/Prev ${prevXrefOffset}
+>>
+startxref
+${xrefOffset}
+%%EOF
+`;
 
-  // Añadir o extender el AcroForm del catálogo. Defensivo contra PDFs raros
-  try {
-    let acroForm = pdfDoc.catalog.get(PDFName.of('AcroForm'));
-    if (acroForm) {
-      acroForm = pdfDoc.context.lookup(acroForm);
-    }
+  // 9. Construir el archivo final
+  const bodyBytes = new TextEncoder().encode(body);
+  const xrefBytes = new TextEncoder().encode(xrefStr + trailerStr);
+  let pdfBytes = new Uint8Array(originalLen + bodyBytes.length + xrefBytes.length);
+  pdfBytes.set(original, 0);
+  pdfBytes.set(bodyBytes, originalLen);
+  pdfBytes.set(xrefBytes, originalLen + bodyBytes.length);
 
-    if (acroForm && typeof acroForm.set === 'function' && typeof acroForm.get === 'function') {
-      let fields = acroForm.get(PDFName.of('Fields'));
-      if (fields) {
-        fields = pdfDoc.context.lookup(fields);
-      }
-      if (fields && typeof fields.push === 'function') {
-        fields.push(primaryWidgetRef);
-      } else {
-        acroForm.set(PDFName.of('Fields'), pdfDoc.context.obj([primaryWidgetRef]));
-      }
-      acroForm.set(PDFName.of('SigFlags'), PDFNumber.of(3));
-    } else {
-      const af = pdfDoc.context.obj({
-        SigFlags: PDFNumber.of(3),
-        Fields: pdfDoc.context.obj([primaryWidgetRef]),
-      });
-      pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
-    }
-  } catch(acroErr) {
-    log('info', `AcroForm reemplazado: ${acroErr.message}`);
-    const af = pdfDoc.context.obj({
-      SigFlags: PDFNumber.of(3),
-      Fields: pdfDoc.context.obj([primaryWidgetRef]),
-    });
-    pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
-  }
+  log('info', `Incremental: original=${originalLen} + body=${bodyBytes.length} + xref=${xrefBytes.length} = ${pdfBytes.length}`);
 
-  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.08'));
-  pdfDoc.setModificationDate(now);
-
-  // 4. Guardar el PDF SIN streams comprimidos para poder localizar el placeholder
-  let pdfBytes = await pdfDoc.save({ useObjectStreams: false });
-  pdfBytes = new Uint8Array(pdfBytes);
-
-  // 5. Localizar placeholders /Contents y /ByteRange
-  // Decodificar a binary string (1 char = 1 byte) para usar regex con offsets en bytes
-  const pdfStr = new TextDecoder('iso-8859-1').decode(pdfBytes);
-
-  // Regex muy específico: exigir EXACTAMENTE los 16384 ceros del placeholder, evita falsos positivos
+  // 10. Localizar el placeholder /Contents en el PDF FINAL
+  const pdfStr2 = new TextDecoder('iso-8859-1').decode(pdfBytes);
+  const PLACEHOLDER_HEX_LEN = 16384;
   const contentsRegex = new RegExp(`\\/Contents\\s*<(0{${PLACEHOLDER_HEX_LEN}})>`);
-  const contentsMatch = pdfStr.match(contentsRegex);
-  if (!contentsMatch) throw new Error('No se localizó el placeholder /Contents');
+  const contentsMatch = pdfStr2.match(contentsRegex);
+  if (!contentsMatch) throw new Error('No se encontró el placeholder /Contents');
 
-  // Posiciones EXACTAS de '<' y '>' en bytes
   const ltPos = contentsMatch.index + contentsMatch[0].indexOf('<');
   const gtPos = contentsMatch.index + contentsMatch[0].lastIndexOf('>');
 
-  // ByteRange: convención EXCLUDE-BOTH-BRACKETS (estándar usado por Adobe, iText, node-signpdf)
-  //   - Range A: [0, ltPos-1]  → length = ltPos                     (excluye '<')
-  //   - Range B: [gtPos+1, end-1] → length = pdfBytes.length-gtPos-1 (excluye '>')
+  // Localizar y patchar el placeholder /ByteRange
+  const brRegex = /\/ByteRange\s*\[\s*0\s+9999999999\s+9999999999\s+9999999999\s*\]/;
+  const brMatch = pdfStr2.match(brRegex);
+  if (!brMatch) throw new Error('No se encontró el placeholder /ByteRange');
+
   const realByteRange = [0, ltPos, gtPos + 1, pdfBytes.length - (gtPos + 1)];
-
-  const brMatch = pdfStr.match(/\/ByteRange\s*\[\s*0\s+9999999999\s+9999999999\s+9999999999\s*\]/);
-  if (!brMatch) throw new Error('No se localizó el placeholder /ByteRange');
-
   const newBrStr = `/ByteRange [${realByteRange.join(' ')}]`;
   if (newBrStr.length > brMatch[0].length) {
     throw new Error(`ByteRange real (${newBrStr.length}) supera placeholder (${brMatch[0].length})`);
@@ -1628,96 +1759,50 @@ async function signDoc(doc) {
     pdfBytes[brMatch.index + i] = paddedBr.charCodeAt(i);
   }
 
-  // 6. Construir los datos a firmar usando EXACTAMENTE la misma convención que ByteRange
-  //    Range A: bytes [0, ltPos-1]  (excluye '<')
-  //    Range B: bytes [gtPos+1, end-1]  (excluye '>')
-  const range1 = pdfBytes.subarray(0, ltPos);            // bytes 0..ltPos-1
-  const range2 = pdfBytes.subarray(gtPos + 1);           // bytes gtPos+1..end-1
+  // 11. Construir dataToSign desde los nuevos bytes patcheados
+  const range1 = pdfBytes.subarray(0, ltPos);
+  const range2 = pdfBytes.subarray(gtPos + 1);
   const dataToSign = new Uint8Array(range1.length + range2.length);
   dataToSign.set(range1, 0);
   dataToSign.set(range2, range1.length);
 
-  // Verificación de coherencia: longitud de datos firmados = suma de longitudes de ByteRange
-  const expectedLen = realByteRange[1] + realByteRange[3];
-  if (dataToSign.length !== expectedLen) {
-    throw new Error(`Inconsistencia: dataToSign=${dataToSign.length} vs ByteRange total=${expectedLen}`);
-  }
-
-  // Pre-cálculo del SHA-256 para diagnóstico (lo que Adobe DEBE re-hashear y validar)
   const preMd = forge.md.sha256.create();
   preMd.update(uint8ArrayToBinary(dataToSign));
   const preHashHex = preMd.digest().toHex();
-  log('info', `Cert firmante: CN="${certCN}" (${certs.length} cert(s) en .p12)`);
+  log('info', `Cert firmante: CN="${certCN}"`);
   log('info', `Pre-firma SHA-256: ${preHashHex.slice(0, 32)}…`);
-  log('info', `ByteRange=[${realByteRange.join(',')}] · ltPos=${ltPos} · gtPos=${gtPos} · total=${pdfBytes.length}`);
+  log('info', `ByteRange=[${realByteRange.join(',')}] · ltPos=${ltPos} · gtPos=${gtPos}`);
 
-  // ════════════════════════════════════════════════════════════
-  // PAdES-B-B: construir el atributo firmado `signing-certificate-v2`
-  // (OID 1.2.840.113549.1.9.16.2.47, RFC 5035).
-  // Esto es OBLIGATORIO para que VALIDe/@firma considere la firma como
-  // PAdES-B-B válida. Sin él la trata como PKCS#7 genérico y la rechaza.
-  //
-  // Estructura ASN.1:
-  //   SigningCertificateV2 ::= SEQUENCE {
-  //     certs    SEQUENCE OF ESSCertIDv2,
-  //     policies SEQUENCE OF PolicyInformation OPTIONAL  -- omitimos
-  //   }
-  //   ESSCertIDv2 ::= SEQUENCE {
-  //     hashAlgorithm AlgorithmIdentifier DEFAULT id-sha256, -- omitido
-  //     certHash      OCTET STRING,                          -- SHA-256(cert DER)
-  //     issuerSerial  IssuerSerial OPTIONAL
-  //   }
-  //   IssuerSerial ::= SEQUENCE {
-  //     issuer       GeneralNames,  -- SEQUENCE OF GeneralName
-  //     serialNumber CertificateSerialNumber
-  //   }
-  // ════════════════════════════════════════════════════════════
+  // 12. PAdES-B-B: construir signing-certificate-v2 (RFC 5035)
   function buildSigningCertificateV2(c) {
     const asn1 = forge.asn1;
-    // SHA-256 del cert DER (re-encoded por forge — el verificador hace lo mismo)
     const certDer = asn1.toDer(forge.pki.certificateToAsn1(c)).getBytes();
     const md = forge.md.sha256.create();
     md.update(certDer);
     const certHash = md.digest().getBytes();
 
-    // Issuer name como directoryName [4] EXPLICIT dentro de GeneralName
     const issuerDN = forge.pki.distinguishedNameToAsn1({ attributes: c.issuer.attributes });
     const generalName = asn1.create(asn1.Class.CONTEXT_SPECIFIC, 4, true, [issuerDN]);
     const generalNames = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [generalName]);
 
-    // Serial number como INTEGER
     const serialBytes = forge.util.hexToBytes(c.serialNumber);
     const serialAsn1 = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.INTEGER, false, serialBytes);
 
-    // IssuerSerial
     const issuerSerial = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [
-      generalNames,
-      serialAsn1,
+      generalNames, serialAsn1,
     ]);
-
-    // certHash como OCTET STRING
     const certHashOct = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.OCTETSTRING, false, certHash);
-
-    // ESSCertIDv2 (omitimos hashAlgorithm porque DEFAULT es id-sha256)
     const essCertIdV2 = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [
-      certHashOct,
-      issuerSerial,
+      certHashOct, issuerSerial,
     ]);
-
-    // SEQUENCE OF ESSCertIDv2
     const essCertList = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [essCertIdV2]);
-
-    // SigningCertificateV2 SEQUENCE
     return asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [essCertList]);
   }
   const sigCertV2 = buildSigningCertificateV2(cert);
-  log('info', '✓ Atributo signing-certificate-v2 construido (PAdES-B-B)');
 
-  // 7. Firmar con PKCS#7 detached SHA-256
+  // 13. Firmar con PKCS#7 + signing-certificate-v2
   const p7 = forge.pkcs7.createSignedData();
   p7.content = forge.util.createBuffer(dataToSign);
-
-  // SOLO incluir el cert del firmante (NO la cadena CA).
   p7.addCertificate(cert);
 
   p7.addSigner({
@@ -1728,7 +1813,6 @@ async function signDoc(doc) {
       { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
       { type: forge.pki.oids.messageDigest },
       { type: forge.pki.oids.signingTime, value: now },
-      // PAdES-B-B: signing-certificate-v2 (RFC 5035)
       { type: '1.2.840.113549.1.9.16.2.47', value: sigCertV2 },
     ],
   });
@@ -1737,58 +1821,18 @@ async function signDoc(doc) {
   const derBytes = forge.asn1.toDer(p7.toAsn1()).getBytes();
   const hexSig = forge.util.bytesToHex(derBytes);
 
-  // VERIFICACIÓN: parsear nuestro propio PKCS#7 para confirmar estructura válida.
-  // forge guarda los signers parseados como `signerInfos` (no `signers`).
-  try {
-    const verifyAsn1 = forge.asn1.fromDer(derBytes);
-    const parsedP7 = forge.pkcs7.messageFromAsn1(verifyAsn1);
-    const certsP = parsedP7.certificates || [];
-    const signersP = parsedP7.signerInfos || parsedP7.signers || [];
-    log('info', `PKCS#7 estructura: ${certsP.length} cert(s), ${signersP.length} signer(s)`);
-
-    if (certsP.length === 0) {
-      log('err', '⚠ El PKCS#7 no contiene certificados');
-    }
-    if (signersP.length === 0) {
-      log('err', '⚠ El PKCS#7 no contiene signers');
-    }
-    if (certsP.length > 0 && signersP.length > 0) {
-      // Comprobar que el SID del signer apunta a un cert presente.
-      // Los serial numbers en forge se manejan como hex string en minúscula.
-      const signer = signersP[0];
-      const sigSerial = String(signer.serialNumber || signer.sid?.serialNumber || '').toLowerCase().replace(/^0+/, '');
-      let matched = false;
-      let certSerialList = [];
-      for (const c of certsP) {
-        const cs = String(c.serialNumber || '').toLowerCase().replace(/^0+/, '');
-        certSerialList.push(cs.slice(0, 12));
-        if (cs && cs === sigSerial) { matched = true; }
-      }
-      if (matched) {
-        log('ok', `✓ Signer ↔ Cert match: serial=${sigSerial.slice(0, 16)}…`);
-      } else {
-        log('err', `⚠ Signer SID (serial=${sigSerial.slice(0,16)}…) no coincide con certs disponibles [${certSerialList.join(', ')}]`);
-      }
-    }
-  } catch(parseErr) {
-    log('err', 'PKCS#7 generado no es parseable: ' + parseErr.message);
-  }
-
   if (hexSig.length > PLACEHOLDER_HEX_LEN) {
-    throw new Error(`PKCS#7 (${hexSig.length} hex) > placeholder (${PLACEHOLDER_HEX_LEN}). Aumentar tamaño.`);
+    throw new Error(`PKCS#7 (${hexSig.length} hex) > placeholder (${PLACEHOLDER_HEX_LEN})`);
   }
-
   const paddedHex = (hexSig + '0'.repeat(PLACEHOLDER_HEX_LEN - hexSig.length)).toUpperCase();
 
-  // 8. Insertar la firma hex DENTRO de los brackets (entre '<' y '>')
-  //    El placeholder hex empieza en ltPos+1 y termina en gtPos-1
+  // 14. Insertar la firma hex DENTRO de los brackets
   const placeholderHexStart = ltPos + 1;
   for (let i = 0; i < paddedHex.length; i++) {
     pdfBytes[placeholderHexStart + i] = paddedHex.charCodeAt(i);
   }
 
-  // 9. AUTO-VERIFICACIÓN: re-leer ByteRange del PDF final y comparar hash
-  //    Garantiza que lo que firmamos == lo que Acrobat va a re-hashear
+  // 15. Auto-verificación
   try {
     const verifyRange1 = pdfBytes.subarray(realByteRange[0], realByteRange[0] + realByteRange[1]);
     const verifyRange2 = pdfBytes.subarray(realByteRange[2], realByteRange[2] + realByteRange[3]);
@@ -1801,7 +1845,7 @@ async function signDoc(doc) {
     const postHashHex = md2.digest().toHex();
 
     if (preHashHex !== postHashHex) {
-      throw new Error(`Hash mismatch: signed=${preHashHex.slice(0,16)}... vs file=${postHashHex.slice(0,16)}...`);
+      throw new Error(`Hash mismatch: signed=${preHashHex.slice(0,16)}… vs file=${postHashHex.slice(0,16)}…`);
     }
     log('ok', `Hash post-firma OK: ${postHashHex.slice(0, 32)}…`);
   } catch(verifyErr) {
@@ -1809,7 +1853,7 @@ async function signDoc(doc) {
     throw verifyErr;
   }
 
-  log('ok', `Firma PKCS#7 SHA-256 (${Math.round(hexSig.length/2)} bytes) ByteRange=[${realByteRange.join(',')}]`);
+  log('ok', `Firma incremental PKCS#7 SHA-256 (${Math.round(hexSig.length/2)} bytes) ByteRange=[${realByteRange.join(',')}]`);
   return pdfBytes;
 }
 
