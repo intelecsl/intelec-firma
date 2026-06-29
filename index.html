@@ -311,9 +311,9 @@ input[type="file"]{display:none;}
   <div class="hdr-divider"></div>
   <div class="htx">
     <div class="appname">Firma Digital</div>
-    <div class="hsub-inline">PKCS#7 SHA-256 · Firma multipágina</div>
+    <div class="hsub-inline">PAdES-B-B · signing-certificate-v2</div>
   </div>
-  <span class="vbadge">v3.07</span>
+  <span class="vbadge">v3.08</span>
 </header>
 
 <div class="scroll">
@@ -1591,7 +1591,7 @@ async function signDoc(doc) {
     pdfDoc.catalog.set(PDFName.of('AcroForm'), pdfDoc.context.register(af));
   }
 
-  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.07'));
+  pdfDoc.setProducer(sanitize('Firma Digital Intelec v3.08'));
   pdfDoc.setModificationDate(now);
 
   // 4. Guardar el PDF SIN streams comprimidos para poder localizar el placeholder
@@ -1651,15 +1651,73 @@ async function signDoc(doc) {
   log('info', `Pre-firma SHA-256: ${preHashHex.slice(0, 32)}…`);
   log('info', `ByteRange=[${realByteRange.join(',')}] · ltPos=${ltPos} · gtPos=${gtPos} · total=${pdfBytes.length}`);
 
+  // ════════════════════════════════════════════════════════════
+  // PAdES-B-B: construir el atributo firmado `signing-certificate-v2`
+  // (OID 1.2.840.113549.1.9.16.2.47, RFC 5035).
+  // Esto es OBLIGATORIO para que VALIDe/@firma considere la firma como
+  // PAdES-B-B válida. Sin él la trata como PKCS#7 genérico y la rechaza.
+  //
+  // Estructura ASN.1:
+  //   SigningCertificateV2 ::= SEQUENCE {
+  //     certs    SEQUENCE OF ESSCertIDv2,
+  //     policies SEQUENCE OF PolicyInformation OPTIONAL  -- omitimos
+  //   }
+  //   ESSCertIDv2 ::= SEQUENCE {
+  //     hashAlgorithm AlgorithmIdentifier DEFAULT id-sha256, -- omitido
+  //     certHash      OCTET STRING,                          -- SHA-256(cert DER)
+  //     issuerSerial  IssuerSerial OPTIONAL
+  //   }
+  //   IssuerSerial ::= SEQUENCE {
+  //     issuer       GeneralNames,  -- SEQUENCE OF GeneralName
+  //     serialNumber CertificateSerialNumber
+  //   }
+  // ════════════════════════════════════════════════════════════
+  function buildSigningCertificateV2(c) {
+    const asn1 = forge.asn1;
+    // SHA-256 del cert DER (re-encoded por forge — el verificador hace lo mismo)
+    const certDer = asn1.toDer(forge.pki.certificateToAsn1(c)).getBytes();
+    const md = forge.md.sha256.create();
+    md.update(certDer);
+    const certHash = md.digest().getBytes();
+
+    // Issuer name como directoryName [4] EXPLICIT dentro de GeneralName
+    const issuerDN = forge.pki.distinguishedNameToAsn1({ attributes: c.issuer.attributes });
+    const generalName = asn1.create(asn1.Class.CONTEXT_SPECIFIC, 4, true, [issuerDN]);
+    const generalNames = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [generalName]);
+
+    // Serial number como INTEGER
+    const serialBytes = forge.util.hexToBytes(c.serialNumber);
+    const serialAsn1 = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.INTEGER, false, serialBytes);
+
+    // IssuerSerial
+    const issuerSerial = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [
+      generalNames,
+      serialAsn1,
+    ]);
+
+    // certHash como OCTET STRING
+    const certHashOct = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.OCTETSTRING, false, certHash);
+
+    // ESSCertIDv2 (omitimos hashAlgorithm porque DEFAULT es id-sha256)
+    const essCertIdV2 = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [
+      certHashOct,
+      issuerSerial,
+    ]);
+
+    // SEQUENCE OF ESSCertIDv2
+    const essCertList = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [essCertIdV2]);
+
+    // SigningCertificateV2 SEQUENCE
+    return asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [essCertList]);
+  }
+  const sigCertV2 = buildSigningCertificateV2(cert);
+  log('info', '✓ Atributo signing-certificate-v2 construido (PAdES-B-B)');
+
   // 7. Firmar con PKCS#7 detached SHA-256
-  // Pasar el Uint8Array DIRECTAMENTE a forge (más fiable que vía binary string)
   const p7 = forge.pkcs7.createSignedData();
   p7.content = forge.util.createBuffer(dataToSign);
 
   // SOLO incluir el cert del firmante (NO la cadena CA).
-  // Razón: certificados españoles (FNMT/ACCV) a veces tienen extensiones que
-  // forge no re-encoda fielmente. Incluir solo el firmante minimiza el riesgo
-  // de producir un PKCS#7 corrupto que VALIDe rechace.
   p7.addCertificate(cert);
 
   p7.addSigner({
@@ -1670,6 +1728,8 @@ async function signDoc(doc) {
       { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
       { type: forge.pki.oids.messageDigest },
       { type: forge.pki.oids.signingTime, value: now },
+      // PAdES-B-B: signing-certificate-v2 (RFC 5035)
+      { type: '1.2.840.113549.1.9.16.2.47', value: sigCertV2 },
     ],
   });
   p7.sign({ detached: true });
