@@ -336,9 +336,9 @@ header{background:var(--navy);padding:10px 14px;display:flex;align-items:center;
   <div class="hdr-divider"></div>
   <div class="htx">
     <div class="appname">Firma Digital</div>
-    <div class="hsub-inline">AutoFirma (diálogo) + interna</div>
+    <div class="hsub-inline">AutoFirma + sello visible</div>
   </div>
-  <span class="vbadge">v3.11</span>
+  <span class="vbadge">v3.12</span>
 </header>
 
 <div class="scroll">
@@ -1467,20 +1467,138 @@ function parseCertificate(pin) {
 // ═══════════════════════════════════════════════════════
 const CHUNK = 12000; // tamaño seguro por mensaje de Office Dialog
 
-function signDocAutoFirma(doc) {
+// ═══════════════════════════════════════════════════════
+// Cálculo de posiciones de firma (compartido entre modos)
+// ═══════════════════════════════════════════════════════
+function computeTargets(doc, pages) {
+  const sel = fieldSel[doc.id] || { type: 'manual' };
+  const sigPos  = document.getElementById('sigPos').value;
+  const sigPage = document.getElementById('sigPage').value;
+  const W = 185, H = 32, MARGIN = 18;
+  let targets = [];
+  const cpArr = customPos[doc.id] || [];
+
+  if (cpArr.length > 0 && sel.type === 'manual') {
+    targets = cpArr.map(p => ({ pageIdx: p.page - 1, x: p.x, y: p.y, w: p.w, h: p.h }));
+  } else if (sel.type === 'acro' && doc.sigFields[sel.idx]) {
+    const f = doc.sigFields[sel.idx];
+    const [x1, y1, x2, y2] = f.rect;
+    const w = Math.max(Math.abs(x2 - x1), 100);
+    const h = Math.max(Math.abs(y2 - y1), 28);
+    targets = [{ pageIdx: f.page - 1, x: Math.min(x1, x2), y: Math.min(y1, y2), w, h }];
+  } else if (sel.type === 'text' && doc.textMatches[sel.idx]) {
+    const m = doc.textMatches[sel.idx];
+    const [x1, y1, x2, y2] = m.rect;
+    const x = Math.min(x1, x2);
+    const y = Math.max(0, Math.min(y1, y2) - H - 4);
+    targets = [{ pageIdx: m.page - 1, x, y, w: W, h: H }];
+  } else {
+    let pageIdxs = [];
+    const sigRange = document.getElementById('sigRange')?.value || '';
+    if      (sigPage === 'first')  pageIdxs = [0];
+    else if (sigPage === 'last')   pageIdxs = [pages.length - 1];
+    else if (sigPage === 'all')    pageIdxs = pages.map((_, i) => i);
+    else if (sigPage === 'custom') pageIdxs = parsePageRange(sigRange, pages.length).map(n => n - 1);
+    else pageIdxs = [pages.length - 1];
+    pageIdxs.forEach(pageIdx => {
+      if (pageIdx < 0 || pageIdx >= pages.length) return;
+      const { width, height } = pages[pageIdx].getSize();
+      let x, y;
+      if      (sigPos === 'bottom-right') { x = width - W - MARGIN; y = MARGIN; }
+      else if (sigPos === 'bottom-left')  { x = MARGIN; y = MARGIN; }
+      else if (sigPos === 'top-right')    { x = width - W - MARGIN; y = height - H - MARGIN; }
+      else                                { x = MARGIN; y = height - H - MARGIN; }
+      targets.push({ pageIdx, x, y, w: W, h: H });
+    });
+  }
+  return targets;
+}
+
+// Dibuja el sello visible (recuadro + texto) sobre el PDF y devuelve bytes nuevos.
+// Se usa en modo AutoFirma para tener sello propio ANTES de la firma criptográfica.
+async function drawStampOnPdf(doc) {
+  const { PDFDocument, rgb, StandardFonts } = PDFLib;
+  const pdfDoc = await PDFDocument.load(doc.bytes.slice(0), { ignoreEncryption: true });
+  const pages = pdfDoc.getPages();
+  const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const now = new Date();
+  const certCN = certNameG ? certNameG.replace(/\.[^.]+$/, '') : 'Intelec S.L.';
+  const dateStr = sanitize(now.toLocaleDateString('es-ES') + ' ' + now.toLocaleTimeString('es-ES'));
+
+  const targets = computeTargets(doc, pages);
+  if (targets.length === 0) {
+    log('info', 'Sin posición de sello — AutoFirma pondrá solo su rúbrica');
+    return new Uint8Array(doc.bytes.slice(0));
+  }
+
+  const fs = 7, fsSmall = 6;
+  for (const t of targets) {
+    if (t.pageIdx < 0 || t.pageIdx >= pages.length) continue;
+    const pg = pages[t.pageIdx];
+    pg.drawRectangle({ x:t.x, y:t.y, width:t.w, height:t.h,
+      color:rgb(.97,.93,.17), opacity:.14,
+      borderColor:rgb(.16,.23,.37), borderWidth:.9 });
+    pg.drawRectangle({ x:t.x, y:t.y+t.h-4, width:t.w, height:4,
+      color:rgb(.97,.86,.17) });
+    pg.drawText(sanitize('FIRMADO DIGITALMENTE'),
+      { x:t.x+5, y:t.y+t.h-14, size:fs, font, color:rgb(.16,.23,.37) });
+    pg.drawText(sanitize(certCN.length > 40 ? certCN.slice(0,37)+'...' : certCN),
+      { x:t.x+5, y:t.y+9, size:fsSmall, font, color:rgb(.29,.38,.5) });
+    pg.drawText(sanitize(dateStr),
+      { x:t.x+5, y:t.y+2, size:fsSmall, font, color:rgb(.29,.38,.5) });
+  }
+  log('ok', `Sello visible dibujado en ${targets.length} posición(es)`);
+
+  // Guardar el primer target para que AutoFirma ponga su rúbrica en el mismo sitio
+  drawStampOnPdf._lastTarget = targets[0];
+  drawStampOnPdf._lastPageCount = pages.length;
+
+  const out = await pdfDoc.save({ useObjectStreams: false });
+  return new Uint8Array(out);
+}
+
+async function signDocAutoFirma(doc) {
+  // 1) Dibujar NUESTRO sello visible sobre el PDF (usa posición/click-to-place)
+  let stampedBytes;
+  try {
+    stampedBytes = await drawStampOnPdf(doc);
+  } catch(e) {
+    log('err', 'No se pudo dibujar el sello: ' + e.message + ' — se firma sin sello propio');
+    stampedBytes = new Uint8Array(doc.bytes.slice(0));
+  }
+
+  // 2) Calcular la posición de la rúbrica de AutoFirma (mismo sitio que el sello)
+  const t = drawStampOnPdf._lastTarget;
+  const nPages = drawStampOnPdf._lastPageCount || 1;
+  let rubricaParams = [];
+  if (t) {
+    // AutoFirma usa coordenadas de rúbrica: signaturePositionOnPageLowerLeftX/Y,
+    // UpperRightX/Y, y signaturePage (1-based; 0 = todas; -1 = última).
+    const pageNum = t.pageIdx + 1;
+    rubricaParams = [
+      'signaturePositionOnPageLowerLeftX=' + Math.round(t.x),
+      'signaturePositionOnPageLowerLeftY=' + Math.round(t.y),
+      'signaturePositionOnPageUpperRightX=' + Math.round(t.x + t.w),
+      'signaturePositionOnPageUpperRightY=' + Math.round(t.y + t.h),
+      'signaturePage=' + pageNum,
+    ];
+  }
+
   return new Promise((resolve, reject) => {
     // Comprobar que tenemos el Dialog API de Office
     const hasDialog = typeof Office !== 'undefined' &&
                       Office.context && Office.context.ui &&
                       typeof Office.context.ui.displayDialogAsync === 'function';
 
-    const dataB64 = uint8ArrayToBase64(new Uint8Array(doc.bytes.slice(0)));
+    // Enviar a AutoFirma el PDF YA SELLADO (no el original)
+    const dataB64 = uint8ArrayToBase64(stampedBytes);
 
     if (!hasDialog) {
       // Fuera de Outlook (navegador normal): abrir ventana externa
       log('info', 'Sin Dialog API de Office — abriendo ventana externa');
       try { sessionStorage.setItem('intelec_firma_pdf', dataB64); } catch(e){}
       try { sessionStorage.setItem('intelec_firma_name', doc.name); } catch(e){}
+      try { sessionStorage.setItem('intelec_firma_rubrica', JSON.stringify(rubricaParams)); } catch(e){}
       const url = location.href.replace(/index\.html.*$/, '') + 'firmar.html';
       window.open(url, '_blank', 'width=520,height=680');
       resolve(null);
@@ -1510,7 +1628,7 @@ function signDocAutoFirma(doc) {
 
           if (m.type === 'ready') {
             // El diálogo está listo → enviarle nombre + PDF troceado
-            sendToDialog(dlg, { type: 'meta', name: doc.name, reason: reasonTxt, total: Math.ceil(dataB64.length / CHUNK) });
+            sendToDialog(dlg, { type: 'meta', name: doc.name, reason: reasonTxt, rubrica: rubricaParams, total: Math.ceil(dataB64.length / CHUNK) });
             for (let i = 0, idx = 0; i < dataB64.length; i += CHUNK, idx++) {
               sendToDialog(dlg, { type: 'chunk', idx, data: dataB64.substr(i, CHUNK) });
             }

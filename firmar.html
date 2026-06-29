@@ -84,6 +84,7 @@ h1{font-family:var(--fh);font-size:16px;font-weight:700;color:var(--navy);}
 let pdfB64 = '';
 let pdfName = 'documento.pdf';
 let reason = 'Conforme';
+let rubrica = [];
 let inDialog = false;
 let recvBuf = [];
 
@@ -103,6 +104,7 @@ Office.onReady(() => {
     inDialog = false;
     pdfB64 = sessionStorage.getItem('intelec_firma_pdf') || '';
     pdfName = sessionStorage.getItem('intelec_firma_name') || 'documento.pdf';
+    try { rubrica = JSON.parse(sessionStorage.getItem('intelec_firma_rubrica') || '[]'); } catch(e){ rubrica = []; }
     document.getElementById('fname').textContent = pdfName;
     if (pdfB64){ setStatus('info','Documento cargado. Pulsa firmar.'); ready(); }
     else offerManual('Selecciona el PDF a firmar.');
@@ -114,6 +116,7 @@ function onParentMsg(arg){
   if (m.type === 'meta'){
     pdfName = m.name || 'documento.pdf';
     reason = m.reason || 'Conforme';
+    rubrica = Array.isArray(m.rubrica) ? m.rubrica : [];
     recvBuf = [];
     document.getElementById('fname').textContent = pdfName;
   } else if (m.type === 'chunk'){
@@ -160,7 +163,8 @@ function doSign(){
   try { AutoScript.cargarAppAfirma(); }
   catch(e){ setStatus('err','No se pudo iniciar AutoFirma: '+e.message); document.getElementById('btnSign').disabled=false; return; }
 
-  const params = ['signatureProductionCity=Madrid','signerContact=contabilidad@intelecsl.com','signatureReason='+reason].join('\n');
+  const baseParams = ['signatureProductionCity=Madrid','signerContact=contabilidad@intelecsl.com','signatureReason='+reason];
+  const params = baseParams.concat(rubrica || []).join('\n');
 
   AutoScript.sign(pdfB64, 'SHA512withRSA', 'PAdES', params,
     function(signatureB64){
