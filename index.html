@@ -27,8 +27,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/forge/1.3.1/forge.min.js"></script>
 <!-- JSZip para empaquetar varios PDFs firmados (los navegadores bloquean descargas múltiples) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<!-- autoscript.js del Gobierno de España para delegar firma PAdES en AutoFirma (modo "firma válida") -->
-<script src="autoscript.js"></script>
+<!-- NOTA: autoscript.js NO se carga aquí (la CSP del panel de Outlook lo bloquea y
+     AutoFirma no puede usar el socket local desde el iframe). Se carga solo en
+     firmar.html, que se abre como diálogo de Office (contexto sin sandbox de iframe). -->
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700&family=Open+Sans:wght@400;500;600&display=swap');
@@ -335,9 +336,9 @@ header{background:var(--navy);padding:10px 14px;display:flex;align-items:center;
   <div class="hdr-divider"></div>
   <div class="htx">
     <div class="appname">Firma Digital</div>
-    <div class="hsub-inline">AutoFirma + firma interna</div>
+    <div class="hsub-inline">AutoFirma (diálogo) + interna</div>
   </div>
-  <span class="vbadge">v3.10</span>
+  <span class="vbadge">v3.11</span>
 </header>
 
 <div class="scroll">
@@ -1459,119 +1460,108 @@ function parseCertificate(pin) {
 //   [%%EOF]
 // ═══════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════
-// FIRMA VÁLIDA vía AutoFirma (autoscript.js → app AutoFirma local)
-// Produce PAdES con el cert del almacén del sistema. Valida en VALIDe.
+// FIRMA VÁLIDA vía AutoFirma — se ejecuta en un DIÁLOGO de Office
+// (displayInIframe:false → ventana separada, sin el sandbox del panel).
+// El panel pasa el PDF al diálogo por mensajes troceados; el diálogo
+// llama a AutoFirma (autoscript.js) y devuelve el PDF firmado.
 // ═══════════════════════════════════════════════════════
-let _afirmaLoaded = false;
-function initAutoFirma() {
-  if (_afirmaLoaded) return;
-  if (typeof AutoScript === 'undefined') {
-    throw new Error('autoscript.js no está cargado');
-  }
-  try {
-    // Cargar la app AutoFirma (prepara el canal de comunicación local)
-    AutoScript.cargarAppAfirma();
-    _afirmaLoaded = true;
-  } catch(e) {
-    throw new Error('No se pudo inicializar AutoFirma: ' + e.message);
-  }
-}
+const CHUNK = 12000; // tamaño seguro por mensaje de Office Dialog
 
 function signDocAutoFirma(doc) {
   return new Promise((resolve, reject) => {
-    if (typeof AutoScript === 'undefined') {
-      // autoscript.js no disponible → abrir en ventana externa
-      log('err', 'AutoFirma no disponible en el panel. Abriendo ventana externa…');
-      openExternalSigner(doc);
-      resolve(null);
-      return;
-    }
+    // Comprobar que tenemos el Dialog API de Office
+    const hasDialog = typeof Office !== 'undefined' &&
+                      Office.context && Office.context.ui &&
+                      typeof Office.context.ui.displayDialogAsync === 'function';
 
-    try {
-      initAutoFirma();
-    } catch(e) {
-      log('err', e.message + ' — abriendo ventana externa');
-      openExternalSigner(doc);
-      resolve(null);
-      return;
-    }
-
-    // Convertir el PDF a base64
     const dataB64 = uint8ArrayToBase64(new Uint8Array(doc.bytes.slice(0)));
 
-    // Parámetros PAdES: firma visible en la última página por defecto.
-    // AutoFirma usa formato de propiedades Java (clave=valor por línea).
-    const params = [
-      'signatureProductionCity=Madrid',
-      'signerContact=contabilidad@intelecsl.com',
-      'signatureReason=' + (document.getElementById('sigText').value.trim() || 'Conforme'),
-    ].join('\n');
-
-    let settled = false;
-    const watchdog = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      log('err', 'AutoFirma no respondió (¿no instalado o socket bloqueado?). Abriendo ventana externa…');
-      openExternalSigner(doc);
+    if (!hasDialog) {
+      // Fuera de Outlook (navegador normal): abrir ventana externa
+      log('info', 'Sin Dialog API de Office — abriendo ventana externa');
+      try { sessionStorage.setItem('intelec_firma_pdf', dataB64); } catch(e){}
+      try { sessionStorage.setItem('intelec_firma_name', doc.name); } catch(e){}
+      const url = location.href.replace(/index\.html.*$/, '') + 'firmar.html';
+      window.open(url, '_blank', 'width=520,height=680');
       resolve(null);
-    }, 25000);
+      return;
+    }
 
-    log('info', 'Enviando a AutoFirma (acepta el diálogo de la app)…');
+    const dialogUrl = location.href.replace(/index\.html.*$/, '') + 'firmar.html';
+    let dlg = null;
+    let settled = false;
+    const reasonTxt = document.getElementById('sigText').value.trim() || 'Conforme';
 
-    AutoScript.sign(
-      dataB64,
-      'SHA512withRSA',
-      'PAdES',
-      params,
-      function(signatureB64 /*, certB64 */) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(watchdog);
-        try {
-          const signedBytes = base64ToUint8Array(signatureB64);
-          log('ok', `AutoFirma devolvió PDF firmado (${signedBytes.length} bytes)`);
-          resolve(signedBytes);
-        } catch(e) {
-          reject(new Error('Respuesta de AutoFirma no decodificable: ' + e.message));
+    Office.context.ui.displayDialogAsync(
+      dialogUrl,
+      { height: 62, width: 42, displayInIframe: false, promptBeforeOpen: false },
+      (res) => {
+        if (res.status !== Office.AsyncResultStatus.Succeeded) {
+          log('err', 'No se pudo abrir el diálogo: ' + (res.error && res.error.message));
+          reject(new Error('No se pudo abrir el diálogo de firma'));
+          return;
         }
-      },
-      function(type, message) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(watchdog);
-        // Error de AutoFirma: si es de conexión, abrir ventana externa
-        const msg = (message || type || 'error desconocido');
-        if (/socket|conex|connect|websocket|no se pudo|not.*found|instal/i.test(msg)) {
-          log('err', 'AutoFirma inaccesible: ' + msg + ' — abriendo ventana externa');
-          openExternalSigner(doc);
-          resolve(null);
-        } else {
-          reject(new Error('AutoFirma: ' + msg));
-        }
+        dlg = res.value;
+        log('info', 'Diálogo de AutoFirma abierto — completa la firma en la ventana');
+
+        dlg.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
+          let m;
+          try { m = JSON.parse(arg.message); } catch(e) { return; }
+
+          if (m.type === 'ready') {
+            // El diálogo está listo → enviarle nombre + PDF troceado
+            sendToDialog(dlg, { type: 'meta', name: doc.name, reason: reasonTxt, total: Math.ceil(dataB64.length / CHUNK) });
+            for (let i = 0, idx = 0; i < dataB64.length; i += CHUNK, idx++) {
+              sendToDialog(dlg, { type: 'chunk', idx, data: dataB64.substr(i, CHUNK) });
+            }
+            sendToDialog(dlg, { type: 'end' });
+          } else if (m.type === 'signed') {
+            // Recibimos el PDF firmado troceado → reensamblar
+            if (!dlg._buf) dlg._buf = [];
+            dlg._buf[m.idx] = m.data;
+          } else if (m.type === 'signed-end') {
+            settled = true;
+            const fullB64 = (dlg._buf || []).join('');
+            try { dlg.close(); } catch(e){}
+            try {
+              const signedBytes = base64ToUint8Array(fullB64);
+              log('ok', `Firma válida recibida de AutoFirma (${signedBytes.length} bytes)`);
+              resolve(signedBytes);
+            } catch(e) {
+              reject(new Error('PDF firmado no decodificable: ' + e.message));
+            }
+          } else if (m.type === 'error') {
+            settled = true;
+            try { dlg.close(); } catch(e){}
+            reject(new Error('AutoFirma: ' + (m.message || 'error')));
+          } else if (m.type === 'cancel') {
+            settled = true;
+            try { dlg.close(); } catch(e){}
+            log('info', 'Firma cancelada en el diálogo');
+            resolve(null);
+          }
+        });
+
+        dlg.addEventHandler(Office.EventType.DialogEventReceived, (arg) => {
+          // El usuario cerró el diálogo manualmente (código 12006) u otro evento
+          if (!settled) {
+            settled = true;
+            log('info', 'Diálogo cerrado antes de completar la firma');
+            resolve(null);
+          }
+        });
       }
     );
   });
 }
 
-// Fallback: abrir una ventana externa con un firmador autónomo (fuera del
-// iframe sandboxed de Outlook, donde el socket a AutoFirma sí funciona).
-function openExternalSigner(doc) {
+// Enviar mensaje al diálogo (messageChild). Si no está disponible, no-op.
+function sendToDialog(dlg, obj) {
   try {
-    // Guardar el PDF temporalmente para que la ventana externa lo recoja
-    const dataB64 = uint8ArrayToBase64(new Uint8Array(doc.bytes.slice(0)));
-    sessionStorage.setItem('intelec_firma_pdf', dataB64);
-    sessionStorage.setItem('intelec_firma_name', doc.name);
-  } catch(e) {
-    // sessionStorage puede fallar si el PDF es muy grande; seguimos igual
-    log('info', 'Aviso: no se pudo precargar el PDF en la ventana externa');
-  }
-  const url = location.href.replace(/index\.html.*$/, '') + 'firmar.html';
-  const win = window.open(url, '_blank', 'width=520,height=640');
-  if (!win) {
-    log('err', 'El navegador bloqueó la ventana. Permite ventanas emergentes para este sitio.');
-  } else {
-    log('info', 'Ventana de AutoFirma abierta. Completa la firma allí y descarga el PDF.');
-  }
+    if (typeof dlg.messageChild === 'function') {
+      dlg.messageChild(JSON.stringify(obj));
+    }
+  } catch(e) { /* algunos hosts no soportan messageChild */ }
 }
 
 // ── Helpers base64 ↔ Uint8Array ──
